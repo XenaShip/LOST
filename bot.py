@@ -4,6 +4,7 @@ import asyncio
 import random
 from telethon import TelegramClient, events
 from dotenv import load_dotenv
+from asgiref.sync import sync_to_async
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -18,12 +19,19 @@ from main.models import MESSAGE  # Используем новую модель
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 SESSION_NAME = "session_name"  # Название файла сессии
-CHANNEL_USERNAME = "loltestneedxenaship"  # Юзернейм или ID канала
+CHANNEL_USERNAMES = [
+    "loltestneedxenaship",
+    "coliferent",
+    "arendamsk_mo",
+    "lvngrm_msk",
+    "Sdat_Kvartiru0",
+    "bestflats_msk",
+    "nebabushkin_msk",
+]
+phone_number = '+7 977 782 0240'
+client = TelegramClient(phone_number, API_ID, API_HASH, system_version='1.2.3-zxc-custom', device_model='aboba-linux-custom', app_version='1.0.1')
 
-client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
-
-
-@client.on(events.NewMessage(chats=CHANNEL_USERNAME))
+@client.on(events.NewMessage(chats=CHANNEL_USERNAMES))
 async def new_message_handler(event):
     if event.message:
         text = event.message.text or ""
@@ -41,13 +49,13 @@ async def new_message_handler(event):
         await asyncio.sleep(delay)
 
         # Сохраняем в Django-модель MESSAGE
-        MESSAGE.objects.create(
+        await sync_to_async(MESSAGE.objects.create)(
             text=text,
             images=images if images else None  # Сохраняем только если есть изображения
         )
-        print(f"Сохранено сообщение: {text[:50]}...")
+
 
 
 client.start()
-print("Бот слушает канал...")
+print("Бот слушает каналы...")
 client.run_until_disconnected()
