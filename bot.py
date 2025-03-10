@@ -5,7 +5,7 @@ import random
 from telethon import TelegramClient, events
 from dotenv import load_dotenv
 from asgiref.sync import sync_to_async
-from main.tasks import process_and_send_messages
+import requests
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -19,7 +19,7 @@ from main.models import MESSAGE  # Используем новую модель
 # API-ключи из my.telegram.org
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-SESSION_NAME = "session_name"  # Название файла сессии
+SESSION_NAME = "session_name"
 CHANNEL_USERNAMES = [
     "loltestneedxenaship",
     "coliferent",
@@ -30,8 +30,28 @@ CHANNEL_USERNAMES = [
     "nebabushkin_msk",
     "loltestneedxenaship",
 ]
-phone_number = '+7 977 782 0240'
-client = TelegramClient(phone_number, API_ID, API_HASH, system_version='1.2.3-zxc-custom', device_model='aboba-linux-custom', app_version='1.0.1')
+TELEGRAM_CHANNEL = os.getenv("TELEGRAM_CHANNEL")  # Куда отправлять
+YANDEX_GPT_API_KEY = os.getenv("YANDEX_GPT_API_KEY")
+
+client = TelegramClient(SESSION_NAME, API_ID, API_HASH, system_version='1.2.3-zxc-custom', device_model='aboba-linux-custom', app_version='1.0.1')
+
+def process_text_with_gpt(text):
+    """Отправка текста в Yandex GPT и получение измененного текста"""
+    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+    headers = {
+        "Authorization": f"Api-Key {YANDEX_GPT_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    data = {
+        "model": "yandexgpt",
+        "prompt": f"Перефразируй объявление в формате: Кол-во комнат, Адрес, Условия.\n\n{text}",
+        "temperature": 0.7,
+        "max_tokens": 200,
+    }
+    response = requests.post(url, json=data, headers=headers)
+    if response.status_code == 200:
+        return response.json().get("result", "")
+    return ""
 
 @client.on(events.NewMessage(chats=CHANNEL_USERNAMES))
 async def new_message_handler(event):
@@ -47,18 +67,24 @@ async def new_message_handler(event):
                     images.append(file_path)
 
         # Имитация задержки (анти-спам)
-        delay = random.uniform(5, 25)  # Задержка от 5 до 25 секунд
+        delay = random.uniform(5, 25)
         await asyncio.sleep(delay)
 
         # Сохраняем в Django-модель MESSAGE
-        await sync_to_async(MESSAGE.objects.create)(
+        message = await sync_to_async(MESSAGE.objects.create)(
             text=text,
-            images=images if images else None  # Сохраняем только если есть изображения
+            images=images if images else None
         )
-        process_and_send_messages.delay()
 
+        # Обрабатываем текст с Yandex GPT
+        new_text = await asyncio.to_thread(process_text_with_gpt, text)
+        if new_text:
+            await client.send_message(TELEGRAM_CHANNEL, new_text)
 
+async def main():
+    await client.start()
+    print("Бот слушает каналы...")
+    await client.run_until_disconnected()
 
-client.start()
-print("Бот слушает каналы...")
-client.run_until_disconnected()
+if __name__ == "__main__":
+    asyncio.run(main())
