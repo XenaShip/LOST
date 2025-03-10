@@ -5,6 +5,7 @@ import random
 from telethon import TelegramClient, events
 from dotenv import load_dotenv
 from asgiref.sync import sync_to_async
+from main.tasks import process_and_send_messages
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -27,6 +28,7 @@ CHANNEL_USERNAMES = [
     "Sdat_Kvartiru0",
     "bestflats_msk",
     "nebabushkin_msk",
+    "loltestneedxenaship",
 ]
 phone_number = '+7 977 782 0240'
 client = TelegramClient(phone_number, API_ID, API_HASH, system_version='1.2.3-zxc-custom', device_model='aboba-linux-custom', app_version='1.0.1')
@@ -53,6 +55,7 @@ async def new_message_handler(event):
             text=text,
             images=images if images else None  # Сохраняем только если есть изображения
         )
+        process_and_send_messages.delay()
 
 
 
