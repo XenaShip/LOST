@@ -1,17 +1,18 @@
 import os
-from venv import logger
-
-import django
 import asyncio
 import random
+import logging
+import time
+from datetime import datetime
 
-from telegram import Bot
+import django
+import requests
+from telegram import Bot, InputMediaPhoto
 from telethon import TelegramClient, events
 from dotenv import load_dotenv
 from asgiref.sync import sync_to_async
-import requests
-# from __future__ import annotations
-import time
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from yandex_cloud_ml_sdk import YCloudML
 
 # Загружаем переменные окружения
@@ -23,8 +24,13 @@ django.setup()
 
 from main.models import MESSAGE  # Используем новую модель
 
+# Настройка логгера
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# Конфигурация
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-API_ID =  os.getenv("API_ID")
+API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 SESSION_NAME = "session_name"
 CHANNEL_USERNAMES = [
@@ -40,20 +46,20 @@ CHANNEL_USERNAMES = [
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 YANDEX_GPT_API_KEY = os.getenv("YANDEX_GPT_API_KEY")
 
+# Инициализация клиента Telethon
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH, system_version='1.2.3-zxc-custom', device_model='aboba-linux-custom', app_version='1.0.1')
 
 def process_text_with_gpt(text):
     """Отправка текста в Yandex GPT и получение измененного текста"""
     sdk = YCloudML(
-        folder_id="b1gk7ilr2af6cdodrhug",
-        auth="AQVN0qY2FwtYfFSLdASCvKqwKp_gK76YlOEFpNqV",
+        folder_id=os.getenv("FOLDER_ID"),
+        auth=os.getenv("AUTH"),
     )
 
     model = sdk.models.completions("yandexgpt")
 
     # Variant 1: wait for the operation to complete using 5-second sleep periods
 
-    print("Variant 1:")
     messages_1 = [
         {
             "role": "system",
@@ -64,7 +70,6 @@ def process_text_with_gpt(text):
             "text": text,
         },
     ]
-
     operation = model.configure(temperature=0.3).run_deferred(messages_1)
 
     status = operation.get_status()
@@ -75,6 +80,41 @@ def process_text_with_gpt(text):
     result = operation.get_result()
     return result.text
 
+async def download_image(image_url):
+    """Скачивает изображение и сохраняет его локально."""
+    response = requests.get(image_url, stream=True)
+    if response.status_code == 200:
+        filename = os.path.join("temp_images", os.path.basename(image_url))
+        os.makedirs("temp_images", exist_ok=True)
+        with open(filename, "wb") as file:
+            for chunk in response.iter_content(1024):
+                file.write(chunk)
+        return filename
+    return None
+
+
+async def send_images_with_text(bot, chat_id, text, images):
+    """Отправляет все изображения в Telegram, первое с текстом, остальные без."""
+    media_group = []
+    open_files = []  # Список открытых файлов, чтобы их не закрыл `with open`
+
+    for index, image_path in enumerate(images):
+        if os.path.exists(image_path):
+            img_file = open(image_path, "rb")  # Открываем файл и сохраняем
+            open_files.append(img_file)  # Добавляем в список, чтобы не закрылся
+
+            if index == 0:
+                media_group.append(InputMediaPhoto(media=img_file, caption=text))
+            else:
+                media_group.append(InputMediaPhoto(media=img_file))
+
+    if media_group:
+        await bot.send_media_group(chat_id=chat_id, media=media_group)
+
+    # Закрываем файлы после отправки
+    for img_file in open_files:
+        img_file.close()
+
 
 @client.on(events.NewMessage(chats=CHANNEL_USERNAMES))
 async def new_message_handler(event):
@@ -82,32 +122,37 @@ async def new_message_handler(event):
         text = event.message.text or ""
         images = []
 
-        # Получаем изображения, если есть
+        # Скачиваем изображения, если есть
         if event.message.media:
-            for attr in [event.message.photo, event.message.document]:
-                if attr:
-                    file_path = await client.download_media(attr)
+            if hasattr(event.message.media, "photo"):
+                file_path = await client.download_media(event.message.media)
+                if file_path:
                     images.append(file_path)
-
 
         # Сохраняем в Django-модель MESSAGE
         message = await sync_to_async(MESSAGE.objects.create)(
             text=text,
             images=images if images else None
         )
+
         # Обрабатываем текст с Yandex GPT
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
-        print(new_text)
+        logger.info(f"Обработанный текст: {new_text}")
+
+        # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)
         if new_text:
-            await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=new_text)
-        delay = random.uniform(5, 25)
-        await asyncio.sleep(delay)
+            if images:
+                await send_images_with_text(bot, TELEGRAM_CHANNEL_ID, new_text, images)
+            else:
+                await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=new_text)
 
+        # Задержка перед следующим сообщением
+        await asyncio.sleep(5)
 
 async def main():
     await client.start()
-    print("Бот слушает каналы...")
+    logger.info("Бот слушает каналы...")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
