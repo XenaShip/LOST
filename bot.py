@@ -7,6 +7,7 @@ from datetime import datetime
 
 import django
 import requests
+from anyio import current_time
 from telegram import Bot, InputMediaPhoto
 from telethon import TelegramClient, events
 from dotenv import load_dotenv
@@ -45,6 +46,7 @@ CHANNEL_USERNAMES = [
 ]
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 YANDEX_GPT_API_KEY = os.getenv("YANDEX_GPT_API_KEY")
+DOWNLOAD_FOLDER = "downloads/"
 
 # Инициализация клиента Telethon
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH, system_version='1.2.3-zxc-custom', device_model='aboba-linux-custom', app_version='1.0.1')
@@ -116,6 +118,26 @@ async def send_images_with_text(bot, chat_id, text, images):
         img_file.close()
 
 
+async def download_images(message):
+    """Скачивает все фото из сообщения (включая альбом)"""
+    images = []  # Список путей загруженных фото
+
+    # 1️⃣ Проверяем, является ли сообщение частью альбома
+    if message.grouped_id:
+        # Получаем ВСЕ сообщения с таким же `grouped_id`
+        album_messages = await client.get_messages(message.chat_id, min_id=message.id - 10, max_id=message.id + 10)
+        photos = [msg.photo for msg in album_messages if msg.photo]  # Оставляем только фото
+    else:
+        # Если одиночное фото — обрабатываем только текущее сообщение
+        photos = [message.photo] if message.photo else []
+
+    # 2️⃣ Скачиваем фото
+    for photo in photos:
+        file_path = await client.download_media(photo, DOWNLOAD_FOLDER)
+        if file_path:
+            images.append(file_path)
+
+
 @client.on(events.NewMessage(chats=CHANNEL_USERNAMES))
 async def new_message_handler(event):
     if event.message:
@@ -125,9 +147,34 @@ async def new_message_handler(event):
         # Скачиваем изображения, если есть
         if event.message.media:
             if hasattr(event.message.media, "photo"):
-                file_path = await client.download_media(event.message.media)
-                if file_path:
-                    images.append(file_path)
+                current_message = event.message
+
+                # Проверяем, есть ли у сообщения grouped_id (является ли оно частью альбома)
+                if current_message.grouped_id:
+                    # Получаем все сообщения с тем же grouped_id
+                    album_messages = await client.get_messages(
+                        event.message.chat_id,
+                        ids=range(current_message.id - 10, current_message.id + 10)  # Захватываем небольшой диапазон
+                    )
+
+                    # Фильтруем только те сообщения, которые имеют тот же grouped_id и не являются None
+                    album_messages = [
+                        msg for msg in album_messages
+                        if
+                        msg is not None and hasattr(msg, 'grouped_id') and msg.grouped_id == current_message.grouped_id
+                    ]
+
+                    # Извлекаем все фото из альбома
+                    photos = [msg.photo for msg in album_messages if msg.photo]
+                else:
+                    # Если это не альбом, просто берем фото из текущего сообщения
+                    photos = [current_message.photo] if current_message.photo else []
+
+                # 2️⃣ Скачиваем фото
+                for photo in photos:
+                    file_path = await client.download_media(photo, DOWNLOAD_FOLDER)
+                    if file_path:
+                        images.append(file_path)
 
         # Сохраняем в Django-модель MESSAGE
         message = await sync_to_async(MESSAGE.objects.create)(
@@ -141,7 +188,7 @@ async def new_message_handler(event):
 
         # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)
-        if new_text:
+        if new_text and (new_text != 'Нет' and new_text != 'Нет.'):
             if images:
                 await send_images_with_text(bot, TELEGRAM_CHANNEL_ID, new_text, images)
             else:
