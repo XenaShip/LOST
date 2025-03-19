@@ -65,7 +65,7 @@ def process_text_with_gpt(text):
     messages_1 = [
         {
             "role": "system",
-            "text": "Переформулируй объявление под шаблон: кол-во комнат, цена, адрес, условия, описание, контакты. Если заданный текст- не объявление, ответь словом нет",
+            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание, контакты. Если заданный текст- не объявление, ответь словом нет. Добавь эмодзи в каждый пункт, если это объявление",
         },
         {
             "role": "user",
@@ -188,6 +188,7 @@ async def new_message_handler(event):
 
         # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)
+        new_text = new_text.replace("*", "")
         if new_text and (new_text != 'Нет' and new_text != 'Нет.'):
             if images:
                 await send_images_with_text(bot, TELEGRAM_CHANNEL_ID, new_text, images)
