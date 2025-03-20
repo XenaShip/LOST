@@ -177,18 +177,19 @@ async def new_message_handler(event):
                         images.append(file_path)
 
         # Сохраняем в Django-модель MESSAGE
-        message = await sync_to_async(MESSAGE.objects.create)(
-            text=text,
-            images=images if images else None
-        )
 
         # Обрабатываем текст с Yandex GPT
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
+        new_text = new_text.replace("*", "")
         logger.info(f"Обработанный текст: {new_text}")
+        message = await sync_to_async(MESSAGE.objects.create)(
+            text=text,
+            images=images if images else None,
+            new_text=new_text
+        )
 
         # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)
-        new_text = new_text.replace("*", "")
         if new_text and (new_text != 'Нет' and new_text != 'Нет.'):
             if images:
                 await send_images_with_text(bot, TELEGRAM_CHANNEL_ID, new_text, images)
