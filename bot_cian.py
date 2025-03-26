@@ -208,7 +208,7 @@ async def message_handler(message: Message):
     mmessage = await sync_to_async(MESSAGE.objects.create)(
         text=text,
         images=images if images else None,
-        new_text=new_text
+        new_text=new_text + f' Контакты {url}'
     )
     if new_text != 'Нет' and new_text != 'Нет.':
         address = process_text_with_gpt_adress(new_text)
