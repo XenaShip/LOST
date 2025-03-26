@@ -154,21 +154,8 @@ def find_nearest_metro(lat, lon):
             min_distance = distance
             nearest_station = station, (m_lat, m_lon)
 
-    return nearest_station, min_distance
+    return min_distance
 
 
 if __name__ == "__main__":
-    address = input("Введите адрес: ")
     print("🔍 Запрос к Яндекс Геокодеру...")
-    coords = get_coordinates(address)
-
-    if not coords:
-        print("❌ Ошибка: не удалось найти координаты адреса.")
-    else:
-        print("✅ Координаты адреса:", coords)
-
-        (metro_name, metro_coords), distance = find_nearest_metro(*coords)
-
-        print(f"🚇 Ближайшее метро: {metro_name}")
-        print("📍 Координаты метро:", metro_coords)
-        print(f"📏 Расстояние до ближайшего метро: {distance:.2f} м")

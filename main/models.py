@@ -17,3 +17,15 @@ class INFO(models.Model):
     count_meters_flat = models.IntegerField(blank=True, null=True)
     location = models.CharField(blank=True, null=True)
     count_meters_metro = models.IntegerField(blank=True, null=True)
+    adress = models.CharField(blank=True, null=True)
+
+
+class CLIENT_INFO(models.Model):
+    price = models.IntegerField(blank=True, null=True)
+    rooms = models.IntegerField(blank=True, null=True)
+    count_meters_flat = models.IntegerField(blank=True, null=True)
+    location = models.CharField(blank=True, null=True)
+    count_meters_metro = models.IntegerField(blank=True, null=True)
+    adress = models.CharField(blank=True, null=True)
+    phone_number = models.CharField(blank=True, null=True)
+    tg = models.CharField(blank=True, null=True)

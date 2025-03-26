@@ -34,12 +34,4 @@ def get_coords_by_address(address):
         print(f"❌ Ошибка получения координат: {e}")
         return None
 
-# 🔍 Вводим адрес и находим округ
-address = input("Введите адрес: ")
-coords = get_coords_by_address(address)
 
-if coords:
-    district = get_district_by_coords(*coords)
-    print(f"🎯 Район: {district}")
-else:
-    print("❌ Не удалось найти район.")

@@ -25,12 +25,18 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+from district import get_coords_by_address, get_district_by_coords
+from make_info import process_text_with_gpt_adress, process_text_with_gpt_price, process_text_with_gpt_sq, \
+    process_text_with_gpt_rooms
+from meters import find_nearest_metro
+
 # Настроим Django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
 # Импортируем модель MESSAGE
-from main.models import MESSAGE
+from main.models import MESSAGE, INFO
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -199,7 +205,23 @@ async def message_handler(message: Message):
     new_text = await asyncio.to_thread(process_text_with_gpt, text)
     new_text = new_text.replace("*", "")
     print(new_text)
-    await save_message_to_db(text, image_urls, new_text)
+    mmessage = await sync_to_async(MESSAGE.objects.create)(
+        text=text,
+        images=images if images else None,
+        new_text=new_text
+    )
+    if new_text != 'Нет' and new_text != 'Нет.':
+        address = process_text_with_gpt_adress(new_text)
+        coords = get_coords_by_address(address)
+        info = await sync_to_async(INFO.objects.create)(
+            message=mmessage,
+            price=process_text_with_gpt_price(new_text),
+            count_meters_flat=process_text_with_gpt_sq(new_text),
+            count_meters_metro=find_nearest_metro(*coords),
+            location=get_district_by_coords(*coords),
+            adress=process_text_with_gpt_adress(new_text),
+            rooms=process_text_with_gpt_rooms(new_text)
+        )
     # Отправляем сообщение в канал
     media_group = [InputMediaPhoto(media=img_url) for img_url in image_urls[1:]]  # Пропускаем первое изображение
 

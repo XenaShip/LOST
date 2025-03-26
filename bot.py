@@ -16,6 +16,11 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from yandex_cloud_ml_sdk import YCloudML
 
+from district import get_district_by_coords, get_coords_by_address
+from make_info import process_text_with_gpt_price, process_text_with_gpt_sq, process_text_with_gpt_adress, \
+    process_text_with_gpt_rooms
+from meters import get_coordinates, find_nearest_metro
+
 # Загружаем переменные окружения
 load_dotenv()
 
@@ -23,7 +28,7 @@ load_dotenv()
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
-from main.models import MESSAGE  # Используем новую модель
+from main.models import MESSAGE, INFO  # Используем новую модель
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
@@ -187,7 +192,18 @@ async def new_message_handler(event):
             images=images if images else None,
             new_text=new_text
         )
-
+        if new_text != 'Нет' and new_text != 'Нет.':
+            address=process_text_with_gpt_adress(new_text)
+            coords=get_coords_by_address(address)
+            info = await sync_to_async(INFO.objects.create)(
+                message=message,
+                price=process_text_with_gpt_price(new_text),
+                count_meters_flat=process_text_with_gpt_sq(new_text),
+                count_meters_metro=find_nearest_metro(*coords),
+                location=get_district_by_coords(*coords),
+                adress=process_text_with_gpt_adress(new_text),
+                rooms=process_text_with_gpt_rooms(new_text)
+            )
         # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)
         if new_text and (new_text != 'Нет' and new_text != 'Нет.'):
