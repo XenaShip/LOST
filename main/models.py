@@ -29,3 +29,5 @@ class CLIENT_INFO(models.Model):
     adress = models.CharField(blank=True, null=True)
     phone_number = models.CharField(blank=True, null=True)
     tg = models.CharField(blank=True, null=True)
+    images = models.JSONField(blank=True, null=True)
+    description = models.CharField(blank=True, null=True)
