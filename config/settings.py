@@ -132,4 +132,4 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-
+TELEGRAM_BOT_TOKEN = '7829685367:AAFdmJo316UlwM9HcUEpr0NxhOc8lPOU_b0'

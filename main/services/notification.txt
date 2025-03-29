@@ -1,0 +1,11 @@
+🏠 НОВОЕ ОБЪЯВЛЕНИЕ ПО ВАШИМ КРИТЕРИЯМ!
+
+{% if info.rooms %}{{ info.rooms }}-комн. квартира{% endif %}
+{% if info.price %}Цена: {{ info.price|floatformat:"0" }} ₽{% endif %}
+{% if info.location %}Район: {{ info.location }}{% endif %}
+
+{% if ad.new_text %}{{ ad.new_text }}{% else %}{{ ad.text }}{% endif %}
+
+{% if info.adress %}📍 Адрес: {{ info.adress }}{% endif %}
+{% if info.count_meters_metro %}🚇 До метро: ~{{ info.count_meters_metro|mul:80 }} м ({{ info.count_meters_metro }} мин){% endif %}
+📅 Размещено: только что

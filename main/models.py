@@ -31,3 +31,38 @@ class CLIENT_INFO(models.Model):
     tg = models.CharField(blank=True, null=True)
     images = models.JSONField(blank=True, null=True)
     description = models.CharField(blank=True, null=True)
+    money_zalog = models.CharField(blank=True, null=True)
+
+
+from django.db import models
+
+
+class Subscription(models.Model):
+    DISTRICT_CHOICES = [
+        ('CAO', 'ЦАО'),
+        ('YUAO', 'ЮАО'),
+        ('SAO', 'САО'),
+        ('ZAO', 'ЗАО'),
+        ('VAO', 'ВАО'),
+        ('ANY', 'Не важно'),
+    ]
+
+    user_id = models.BigIntegerField(unique=True)
+    username = models.CharField(max_length=100, blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Параметры подписки
+    min_price = models.IntegerField(blank=True, null=True)
+    max_price = models.IntegerField(blank=True, null=True)
+    min_rooms = models.IntegerField(blank=True, null=True)
+    max_rooms = models.IntegerField(blank=True, null=True)
+    district = models.CharField(
+        max_length=4,
+        choices=DISTRICT_CHOICES,
+        default='ANY'
+    )
+    max_metro_distance = models.IntegerField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"Подписка {self.user_id}"

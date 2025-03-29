@@ -44,6 +44,8 @@ class ClientForm(StatesGroup):
     address = State()
     phone = State()
     telegram = State()
+    description = State()
+    money_zalog = State()
     images = State()
 
 # Кнопки "Не важно"
@@ -59,6 +61,9 @@ async def start(message: types.Message):
     ])
     await message.answer("Вы хотите снять или сдать квартиру?", reply_markup=keyboard)
 
+@dp.callback_query(F.data == "start")
+async def return_to_start(callback: types.CallbackQuery):
+    await start(callback.message)  # Вызываем функцию start с сообщением
 # Выбор "Снять" или "Сдать"
 # В обработчике start_rent (для снятия квартиры) обновляем клавиатуру с ценами:
 @dp.callback_query(F.data == "rent")
@@ -166,6 +171,20 @@ async def process_client_phone(message: types.Message, state: FSMContext):
 @dp.message(ClientForm.telegram)
 async def process_tg(message: types.Message, state: FSMContext):
     await state.update_data(tg=message.text)
+    await message.answer("Напишите описание квартиры (например: 'Светлая квартира с ремонтом, мебелью и техникой'):")
+    await state.set_state(ClientForm.description)
+
+
+@dp.message(ClientForm.description)
+async def process_description(message: types.Message, state: FSMContext):
+    await state.update_data(description=message.text)
+    await message.answer("Укажите сумму залога (например: '50 000' или 'Без залога'):")
+    await state.set_state(ClientForm.money_zalog)
+
+
+@dp.message(ClientForm.money_zalog)
+async def process_zalog(message: types.Message, state: FSMContext):
+    await state.update_data(money_zalog=message.text)
     await message.answer("Отправьте фото квартиры (можно несколько):")
     await state.set_state(ClientForm.images)
 
@@ -189,7 +208,6 @@ async def finish_images(message: types.Message, state: FSMContext):
         user_data = await state.get_data()
         images = user_data.get("images", [])
 
-        # Проверяем, есть ли хотя бы одно фото
         if not images:
             await message.answer("Пожалуйста, отправьте хотя бы одно фото квартиры.")
             return
@@ -204,16 +222,20 @@ async def finish_images(message: types.Message, state: FSMContext):
                 adress=user_data["adress"],
                 phone_number=user_data["phone_number"],
                 tg=user_data["tg"],
-                images=images  # Уже список file_id, не нужно json.dumps
+                description=user_data["description"],
+                money_zalog=user_data["money_zalog"],  # Сохраняем залог
+                images=images
             )
-            await message.answer("Ваше объявление сохранено!")
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Вернуться в начало", callback_data="start")]
+            ])
+            await message.answer("✅ Ваше объявление сохранено! Хотите создать новое?", reply_markup=keyboard)
             await state.clear()
         except Exception as e:
             logging.error(f"Ошибка при сохранении объявления: {e}")
-            await message.answer("Произошла ошибка при сохранении объявления. Пожалуйста, попробуйте позже.")
+            await message.answer("⚠️ Произошла ошибка при сохранении объявления. Пожалуйста, попробуйте позже.")
     else:
         await message.answer("Отправьте фото или напишите 'Готово', чтобы закончить.")
-
 
 # Обработчики для "Снять квартиру" (RentForm)
 @dp.callback_query(F.data.startswith("price_"))
@@ -320,9 +342,19 @@ async def process_area(callback: types.CallbackQuery, state: FSMContext):
 
             # Отправляем текст объявления
             await callback.message.answer(text)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Вернуться в начало", callback_data="start")]
+            ])
+            await callback.message.answer("Хотите начать новый поиск?", reply_markup=keyboard)
 
     else:
-        await callback.message.answer("😔 Не найдено объявлений по вашим параметрам.")
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Вернуться в начало", callback_data="start")]
+        ])
+        await callback.message.answer(
+            "😔 Не найдено объявлений по вашим параметрам. Хотите попробовать другие параметры?", reply_markup=keyboard)
+
+
 
 
 # Фильтрация объявлений
