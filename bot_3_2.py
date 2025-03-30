@@ -233,7 +233,7 @@ async def unsubscribe(update: Update, context: CallbackContext) -> None:
 
 
 def main() -> None:
-    application = Application.builder().token("7829685367:AAFdmJo316UlwM9HcUEpr0NxhOc8lPOU_b0").build()
+    application = Application.builder().token(os.getenv("TOKEN3")).build()
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('subscribe', subscribe)],

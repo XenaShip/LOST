@@ -4,11 +4,12 @@ import random
 import logging
 import time
 from datetime import datetime
-
+from aiogram import Bot
 import django
 import requests
 from anyio import current_time
 from telegram import Bot, InputMediaPhoto
+from telegram.error import RetryAfter
 from telethon import TelegramClient, events
 from dotenv import load_dotenv
 from asgiref.sync import sync_to_async
@@ -16,6 +17,7 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from yandex_cloud_ml_sdk import YCloudML
 
+from bot_cian import message_handler
 from district import get_district_by_coords, get_coords_by_address
 from make_info import process_text_with_gpt_price, process_text_with_gpt_sq, process_text_with_gpt_adress, \
     process_text_with_gpt_rooms
@@ -28,12 +30,13 @@ load_dotenv()
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
-from main.models import MESSAGE, INFO  # Используем новую модель
+from main.models import MESSAGE, INFO, Subscription  # Используем новую модель
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
+bot2 = Bot(token=os.getenv("TOKEN3"))
 # Конфигурация
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_ID = os.getenv("API_ID")
@@ -143,6 +146,104 @@ async def download_images(message):
             images.append(file_path)
 
 
+async def check_subscriptions_and_notify(info_instance):
+    # Получаем все активные подписки
+    subscriptions = await sync_to_async(list)(Subscription.objects.filter(is_active=True))
+
+    # Получаем данные объявления
+    ad_data = {
+        'price': info_instance.price,
+        'rooms': info_instance.rooms,
+        'location': info_instance.location,
+        'count_meters_metro': info_instance.count_meters_metro,
+        'address': info_instance.adress,  # Обратите внимание: исправлено с adress на address
+        'images': info_instance.message.images,  # Доступ к message через info_instance
+        'description': info_instance.message.new_text
+    }
+
+    for subscription in subscriptions:
+        if await sync_to_async(is_ad_match_subscription)(ad_data, subscription):
+            await send_notification(subscription.user_id, ad_data, info_instance.message)
+
+
+async def send_notification(user_id: int, ad_data: dict, message):
+    """
+    Отправляет уведомление о новом объявлении пользователю
+
+    :param user_id: ID пользователя Telegram
+    :param ad_data: Данные объявления
+    """
+    try:
+        # Формируем текст сообщения с Markdown разметкой
+        message_text = message.new_text
+
+        # Если есть изображения
+        if ad_data.get('images'):
+            # Для 1-10 изображений (ограничение Telegram)
+            media_group = []
+
+            # Первое изображение с подписью
+            media_group.append(
+                InputMediaPhoto(
+                    media=ad_data['images'][0],
+                    caption=message_text,
+                    parse_mode="Markdown"
+                )
+            )
+
+            # Остальные изображения (если есть)
+            for img_url in ad_data['images'][1:10]:
+                media_group.append(InputMediaPhoto(media=img_url))
+
+            await bot2.send_media_group(
+                chat_id=user_id,
+                media=media_group
+            )
+        else:
+            # Если нет изображений - просто текст
+            await bot2.send_message(
+                chat_id=user_id,
+                text=message_text,
+                parse_mode="Markdown"
+            )
+
+    except RetryAfter as e:
+        # Обработка ограничения Telegram (Flood control)
+        print(f"Flood control exceeded. Sleep for {e.timeout} seconds")
+        await asyncio.sleep(e.timeout)
+        await send_notification(user_id, ad_data, message)  # Повторная попытка
+
+    except Exception as e:
+        print(f"Ошибка при отправке уведомления пользователю {user_id}: {str(e)}")
+
+
+def is_ad_match_subscription(ad_data, subscription):
+    """Синхронная функция проверки соответствия подписки"""
+    # Проверка цены
+    if subscription.min_price is not None and ad_data['price'] < subscription.min_price:
+        return False
+    if subscription.max_price is not None and ad_data['price'] > subscription.max_price:
+        return False
+
+    # Проверка количества комнат
+    if subscription.min_rooms is not None and ad_data['rooms'] < subscription.min_rooms:
+        return False
+    if subscription.max_rooms is not None and ad_data['rooms'] > subscription.max_rooms:
+        return False
+
+    # Проверка района
+    if subscription.district != 'ANY' and ad_data['location'] != subscription.district:
+        return False
+
+    # Проверка расстояния до метро (если есть в данных)
+    if ('count_meters_metro' in ad_data and
+        subscription.max_metro_distance is not None and
+        ad_data['count_meters_metro'] > subscription.max_metro_distance):
+        return False
+
+    return True
+
+
 @client.on(events.NewMessage(chats=CHANNEL_USERNAMES))
 async def new_message_handler(event):
     if event.message:
@@ -204,6 +305,7 @@ async def new_message_handler(event):
                 adress=process_text_with_gpt_adress(new_text),
                 rooms=process_text_with_gpt_rooms(new_text)
             )
+            asyncio.create_task(check_subscriptions_and_notify(info))
         # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)
         if new_text and (new_text != 'Нет' and new_text != 'Нет.'):
