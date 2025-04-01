@@ -169,38 +169,38 @@ async def check_subscriptions_and_notify(info_instance):
 async def send_notification(user_id: int, ad_data: dict, message):
     """
     Отправляет уведомление о новом объявлении пользователю
-
-    :param user_id: ID пользователя Telegram
-    :param ad_data: Данные объявления
     """
     try:
-        # Формируем текст сообщения с Markdown разметкой
         message_text = message.new_text
+        images = ad_data.get('images') or []  # Защита от None
 
-        # Если есть изображения
-        if ad_data.get('images'):
-            # Для 1-10 изображений (ограничение Telegram)
+        if images and isinstance(images, list):  # Явная проверка
             media_group = []
 
             # Первое изображение с подписью
-            media_group.append(
-                InputMediaPhoto(
-                    media=ad_data['images'][0],
-                    caption=message_text,
-                    parse_mode="Markdown"
+            first_img = images[0]
+            if first_img.startswith(("http://", "https://")):
+                # Если это URL
+                media_group.append(
+                    InputMediaPhoto(media=first_img, caption=message_text, parse_mode="Markdown")
                 )
-            )
+            else:
+                # Если это локальный путь
+                with open(first_img, "rb") as img_file:
+                    media_group.append(
+                        InputMediaPhoto(media=img_file, caption=message_text, parse_mode="Markdown")
+                    )
 
-            # Остальные изображения (если есть)
-            for img_url in ad_data['images'][1:10]:
-                media_group.append(InputMediaPhoto(media=img_url))
+            # Остальные изображения
+            for img_url in images[1:10]:
+                if img_url.startswith(("http://", "https://")):
+                    media_group.append(InputMediaPhoto(media=img_url))
+                else:
+                    with open(img_url, "rb") as img_file:
+                        media_group.append(InputMediaPhoto(media=img_file))
 
-            await bot2.send_media_group(
-                chat_id=user_id,
-                media=media_group
-            )
+            await bot2.send_media_group(chat_id=user_id, media=media_group)
         else:
-            # Если нет изображений - просто текст
             await bot2.send_message(
                 chat_id=user_id,
                 text=message_text,
@@ -208,14 +208,10 @@ async def send_notification(user_id: int, ad_data: dict, message):
             )
 
     except RetryAfter as e:
-        # Обработка ограничения Telegram (Flood control)
-        print(f"Flood control exceeded. Sleep for {e.timeout} seconds")
         await asyncio.sleep(e.timeout)
-        await send_notification(user_id, ad_data, message)  # Повторная попытка
-
+        await send_notification(user_id, ad_data, message)
     except Exception as e:
-        print(f"Ошибка при отправке уведомления пользователю {user_id}: {str(e)}")
-
+        print(f"Ошибка при отправке уведомления: {e}")
 
 def is_ad_match_subscription(ad_data, subscription):
     """Синхронная функция проверки соответствия подписки"""
