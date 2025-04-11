@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Состояния диалога
-PRICE, ROOMS, DISTRICT, METRO_DISTANCE, CONFIRM = range(5)
+PRICE, ROOMS, FLAT_AREA, DISTRICT, METRO_DISTANCE, CONFIRM = range(6)
 
 
 # Клавиатура выбора округа
@@ -61,6 +61,8 @@ def update_or_create_subscription(user_id, username, params):
             'max_price': params.get('max_price'),
             'min_rooms': params.get('min_rooms'),
             'max_rooms': params.get('max_rooms'),
+            'min_flat': params.get('min_flat'),
+            'max_flat': params.get('max_flat'),
             'district': params.get('district', 'ANY'),
             'max_metro_distance': params.get('max_metro_distance'),
             'is_active': True
@@ -137,6 +139,28 @@ async def get_rooms(update: Update, context: CallbackContext) -> int:
             return ROOMS
 
     await update.message.reply_text(
+        "📏 Укажите желаемую площадь квартиры в м² (мин и макс через пробел):\n"
+        "Пример: 30 60\n"
+        "Или напишите 'не важно'"
+    )
+    return FLAT_AREA
+
+
+async def get_flat_area(update: Update, context: CallbackContext) -> int:
+    text = update.message.text.lower()
+    if text == 'не важно':
+        context.user_data['min_flat'] = None
+        context.user_data['max_flat'] = None
+    else:
+        try:
+            min_flat, max_flat = map(int, text.split())
+            context.user_data['min_flat'] = min_flat
+            context.user_data['max_flat'] = max_flat
+        except:
+            await update.message.reply_text("❌ Неверный формат. Попробуйте снова")
+            return FLAT_AREA
+
+    await update.message.reply_text(
         "🗺️ Выберите округ:",
         reply_markup=get_district_keyboard()
     )
@@ -176,6 +200,7 @@ async def get_metro_distance(update: Update, context: CallbackContext) -> int:
         "✅ Ваши критерии подписки:\n\n"
         f"• Цена: {data.get('min_price', 'не важно')} - {data.get('max_price', 'не важно')} руб\n"
         f"• Комнат: {data.get('min_rooms', 'не важно')}-{data.get('max_rooms', 'не важно')}\n"
+        f"• Площадь: {data.get('min_flat', 'не важно')}-{data.get('max_flat', 'не важно')} м²\n"
         f"• Округ: {district_name}\n"
         f"• До метро: ≤{data.get('max_metro_distance', 'не важно')} м\n\n"
         "Сохранить подписку? (да/нет)"
@@ -214,6 +239,7 @@ async def my_subscription(update: Update, context: CallbackContext) -> None:
             "📋 Ваша текущая подписка:\n\n"
             f"• Цена: {sub.min_price or 'не важно'} - {sub.max_price or 'не важно'} руб\n"
             f"• Комнат: {sub.min_rooms or 'не важно'}-{sub.max_rooms or 'не важно'}\n"
+            f"• Площадь: {sub.min_flat or 'не важно'}-{sub.max_flat or 'не важно'} м²\n"
             f"• Округ: {district_name}\n"
             f"• До метро: ≤{sub.max_metro_distance or 'не важно'} м\n\n"
             "Изменить параметры: /subscribe\n"
@@ -240,6 +266,7 @@ def main() -> None:
         states={
             PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
             ROOMS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_rooms)],
+            FLAT_AREA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_flat_area)],
             DISTRICT: [CallbackQueryHandler(get_district)],
             METRO_DISTANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_metro_distance)],
             CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_subscription)],

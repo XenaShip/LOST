@@ -1,5 +1,3 @@
-from tkinter.constants import CASCADE
-
 from django.db import models
 
 class MESSAGE(models.Model):
@@ -50,7 +48,8 @@ class Subscription(models.Model):
     user_id = models.BigIntegerField(unique=True)
     username = models.CharField(max_length=100, blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+    min_flat = models.IntegerField(blank=True, null=True)
+    max_flat  = models.IntegerField(blank=True, null=True)
     # Параметры подписки
     min_price = models.IntegerField(blank=True, null=True)
     max_price = models.IntegerField(blank=True, null=True)

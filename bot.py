@@ -154,16 +154,18 @@ async def check_subscriptions_and_notify(info_instance):
     ad_data = {
         'price': info_instance.price,
         'rooms': info_instance.rooms,
+        'count_meters_flat': info_instance.count_meters_flat,  # Добавлено поле площади
         'location': info_instance.location,
         'count_meters_metro': info_instance.count_meters_metro,
-        'address': info_instance.adress,  # Обратите внимание: исправлено с adress на address
-        'images': info_instance.message.images,  # Доступ к message через info_instance
+        'address': info_instance.adress,
+        'images': info_instance.message.images,
         'description': info_instance.message.new_text
     }
 
     for subscription in subscriptions:
         if await sync_to_async(is_ad_match_subscription)(ad_data, subscription):
             await send_notification(subscription.user_id, ad_data, info_instance.message)
+
 
 
 async def send_notification(user_id: int, ad_data: dict, message):
@@ -213,31 +215,60 @@ async def send_notification(user_id: int, ad_data: dict, message):
     except Exception as e:
         print(f"Ошибка при отправке уведомления: {e}")
 
+
 def is_ad_match_subscription(ad_data, subscription):
     """Синхронная функция проверки соответствия подписки"""
-    # Проверка цены
-    if subscription.min_price is not None and ad_data['price'] < subscription.min_price:
-        return False
-    if subscription.max_price is not None and ad_data['price'] > subscription.max_price:
-        return False
+    try:
+        # Функция для преобразования строки с запятой в число
+        def parse_number(value):
+            if value is None:
+                return None
+            if isinstance(value, str):
+                # Заменяем запятую на точку и удаляем пробелы
+                value = value.replace(',', '.').strip()
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return None
 
-    # Проверка количества комнат
-    if subscription.min_rooms is not None and ad_data['rooms'] < subscription.min_rooms:
-        return False
-    if subscription.max_rooms is not None and ad_data['rooms'] > subscription.max_rooms:
-        return False
+        # Преобразуем значения в числа (если они не None)
+        ad_price = parse_number(ad_data['price'])
+        ad_rooms = parse_number(ad_data['rooms'])
+        ad_flat_area = parse_number(ad_data.get('count_meters_flat'))
+        ad_metro_distance = parse_number(ad_data.get('count_meters_metro'))
 
-    # Проверка района
-    if subscription.district != 'ANY' and ad_data['location'] != subscription.district:
-        return False
+        # Проверка цены
+        if subscription.min_price is not None and ad_price is not None and ad_price < subscription.min_price:
+            return False
+        if subscription.max_price is not None and ad_price is not None and ad_price > subscription.max_price:
+            return False
 
-    # Проверка расстояния до метро (если есть в данных)
-    if ('count_meters_metro' in ad_data and
-        subscription.max_metro_distance is not None and
-        ad_data['count_meters_metro'] > subscription.max_metro_distance):
-        return False
+        # Проверка количества комнат (используем int, так как комнаты целые)
+        if subscription.min_rooms is not None and ad_rooms is not None and int(ad_rooms) < subscription.min_rooms:
+            return False
+        if subscription.max_rooms is not None and ad_rooms is not None and int(ad_rooms) > subscription.max_rooms:
+            return False
 
-    return True
+        # Проверка площади квартиры
+        if subscription.min_flat is not None and ad_flat_area is not None and ad_flat_area < subscription.min_flat:
+            return False
+        if subscription.max_flat is not None and ad_flat_area is not None and ad_flat_area > subscription.max_flat:
+            return False
+
+        # Проверка района
+        if subscription.district != 'ANY' and ad_data.get('location') != subscription.district:
+            return False
+
+        # Проверка расстояния до метро
+        if (ad_metro_distance is not None and
+            subscription.max_metro_distance is not None and
+            ad_metro_distance > subscription.max_metro_distance):
+            return False
+
+        return True
+    except Exception as e:
+        print(f"Ошибка при проверке соответствия подписки: {e}")
+        return False
 
 
 @client.on(events.NewMessage(chats=CHANNEL_USERNAMES))
@@ -292,10 +323,22 @@ async def new_message_handler(event):
         if new_text != 'Нет' and new_text != 'Нет.':
             address=process_text_with_gpt_adress(new_text)
             coords=get_coords_by_address(address)
+
+            def parse_flat_area(value):
+                try:
+                    if isinstance(value, str):
+                        # Удаляем все нецифровые символы и берем целую часть
+                        value = ''.join(c for c in value if c.isdigit())
+                        return int(value) if value else None
+                    return int(value) if value is not None else None
+                except (ValueError, TypeError):
+                    return None
+
+            flat_area = parse_flat_area(process_text_with_gpt_sq(new_text))
             info = await sync_to_async(INFO.objects.create)(
                 message=message,
                 price=process_text_with_gpt_price(new_text),
-                count_meters_flat=process_text_with_gpt_sq(new_text),
+                count_meters_flat=flat_area,
                 count_meters_metro=find_nearest_metro(*coords),
                 location=get_district_by_coords(*coords),
                 adress=process_text_with_gpt_adress(new_text),
