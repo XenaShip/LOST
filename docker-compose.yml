@@ -8,8 +8,8 @@ services:
       - .env
     ports:
       - "5432:5432"
-    #volumes:
-      #- pg_data:/var/lib/postgresql/data
+    volumes:
+      - pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -23,7 +23,7 @@ services:
     networks:
       - app_network
     tty: true
-    command: sh -c "python manage.py migrate && python bot.py"
+    command: sh -c "sleep 5 && python manage.py migrate && python bot.py"
     depends_on:
       db:
         condition: service_healthy
@@ -62,5 +62,5 @@ networks:
   app_network:
     driver: bridge
 
-#volumes:
-  #pg_data:
+volumes:
+  pg_data:
