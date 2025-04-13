@@ -357,6 +357,7 @@ async def new_message_handler(event):
         await asyncio.sleep(5)
 
 async def main():
+    await asyncio.sleep(10)
     await client.start()
     logger.info("Бот слушает каналы...")
     await client.run_until_disconnected()

@@ -375,6 +375,7 @@ async def main():
 
 
 async def main():
+    await asyncio.sleep(10)
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 

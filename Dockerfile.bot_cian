@@ -1,24 +1,43 @@
-# Базовый образ с Python
-FROM python:3.11-slim
+FROM python:3.11-bookworm
 
-# Устанавливаем рабочую директорию внутри контейнера
-WORKDIR /bot-cian
-
-# Копируем все файлы в контейнер
-COPY . .
-
-# Устанавливаем зависимости
-RUN pip install --upgrade pip
+# Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
     wget \
     unzip \
-    chromium \
-    chromium-driver \
+    curl \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
-RUN pip install --upgrade setuptools wheel
-RUN pip install pyaes intervaltree --no-binary :all:
-RUN pip install undetected-chromedriver
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Указываем команду по умолчанию
+# Установка Chrome (новый метод)
+RUN mkdir -p /etc/apt/keyrings \
+    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /etc/apt/keyrings/google-chrome.gpg \
+    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y \
+    google-chrome-stable \
+    libnss3 \
+    libxss1 \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+# Установка ChromeDriver
+RUN wget https://chromedriver.storage.googleapis.com/$(curl -s https://chromedriver.storage.googleapis.com/LATEST_RELEASE)/chromedriver_linux64.zip \
+    && unzip chromedriver_linux64.zip \
+    && mv chromedriver /usr/local/bin/ \
+    && chmod +x /usr/local/bin/chromedriver \
+    && rm chromedriver_linux64.zip
+
+# Остальная часть Dockerfile
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY . .
+
+ENV CHROME_BIN=/usr/bin/google-chrome
+ENV CHROME_DRIVER=/usr/local/bin/chromedriver
+ENV DISPLAY=:99
+
 CMD ["python", "bot_cian.py"]
