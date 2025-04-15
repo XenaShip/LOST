@@ -1,6 +1,7 @@
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, \
+    ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -211,6 +212,8 @@ async def get_metro_distance(update: Update, context: CallbackContext) -> int:
 
 
 async def confirm_subscription(update: Update, context: CallbackContext) -> int:
+    keyboard = [[KeyboardButton("/start")]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     if update.message.text.lower() == 'да':
         user = update.effective_user
         await update_or_create_subscription(
@@ -218,9 +221,9 @@ async def confirm_subscription(update: Update, context: CallbackContext) -> int:
             username=user.username,
             params=context.user_data
         )
-        await update.message.reply_text("🎉 Подписка успешно сохранена!")
+        await update.message.reply_text("🎉 Подписка успешно сохранена!", reply_markup=reply_markup)
     else:
-        await update.message.reply_text("Настройка подписки отменена")
+        await update.message.reply_text("Настройка подписки отменена", reply_markup=reply_markup)
 
     return ConversationHandler.END
 
@@ -231,6 +234,8 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 
 
 async def my_subscription(update: Update, context: CallbackContext) -> None:
+    keyboard = [[KeyboardButton("/start")]]  # Кнопка /start
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     sub = await get_subscription(update.effective_user.id)
     if sub:
         district_name = dict(Subscription.DISTRICT_CHOICES).get(sub.district, 'Не важно')
@@ -245,22 +250,29 @@ async def my_subscription(update: Update, context: CallbackContext) -> None:
             "Изменить параметры: /subscribe\n"
             "Отписаться: /unsubscribe"
         )
-        await update.message.reply_text(text)
     else:
-        await update.message.reply_text("У вас нет активной подписки. Настройте её через /subscribe")
+        text = "У вас нет активной подписки. Настройте её через /subscribe"
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
 
 async def unsubscribe(update: Update, context: CallbackContext) -> None:
+    keyboard = [[KeyboardButton("/start")]]  # Кнопка /start
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     success = await deactivate_subscription(update.effective_user.id)
     if success:
-        await update.message.reply_text("🔕 Вы успешно отписались от уведомлений")
+        await update.message.reply_text("🔕 Вы успешно отписались от уведомлений", reply_markup=reply_markup)
     else:
-        await update.message.reply_text("У вас нет активной подписки")
+        await update.message.reply_text("У вас нет активной подписки", reply_markup=reply_markup)
 
+async def hide_keyboard(update: Update, context: CallbackContext) -> None:
+    await update.message.reply_text(
+        "⌨️ Клавиатура скрыта.",
+        reply_markup=ReplyKeyboardRemove()
+    )
 
 def main() -> None:
     application = Application.builder().token(os.getenv("TOKEN3")).build()
-
+    application.add_handler(CommandHandler("hide", hide_keyboard))
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('subscribe', subscribe)],
         states={
