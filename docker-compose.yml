@@ -39,43 +39,43 @@ services:
     container_name: bot1_container
     restart: unless-stopped
 
-  bot2:
-    env_file:
-      - .env
-    build:
-      context: .
-      dockerfile: Dockerfile.bot_3_2
-    networks:
-      - app_network
-    tty: true
-    command: sh -c "sleep 20 && python manage.py migrate && python bot_3_2.py"
-    depends_on:
-      db:
-        condition: service_healthy
-    container_name: bot2_container
-    restart: unless-stopped
+ # bot2:
+  #  env_file:
+   #   - .env
+    #build:
+     # context: .
+      #dockerfile: Dockerfile.bot_3_2
+    #networks:
+     # - app_network
+    #tty: true
+    #command: sh -c "sleep 20 && python manage.py migrate && python bot_3_2.py"
+    #depends_on:
+     # db:
+      #  condition: service_healthy
+    #container_name: bot2_container
+    #restart: unless-stopped
 
-  bot3:
-    env_file:
-      - .env
-    build:
-      context: .
-      dockerfile: Dockerfile.bot_cian
-    networks:
-      - app_network
-    tty: true
-    command: sh -c "sleep 30 && python manage.py migrate && python bot_cian.py"
-    depends_on:
-      db:
-        condition: service_healthy
-    container_name: bot3_container
-    restart: unless-stopped
-    environment:
-      - CHROME_BIN=/usr/bin/google-chrome
-      - CHROME_DRIVER=/usr/local/bin/chromedriver
-      - DISPLAY=:99
-    volumes:
-      - /dev/shm:/dev/shm
+  #bot3:
+   # env_file:
+   #   - .env
+  #  build:
+   #   context: .
+   #   dockerfile: Dockerfile.bot_cian
+   # networks:
+    #  - app_network
+   # tty: true
+   # command: sh -c "sleep 30 && python manage.py migrate && python bot_cian.py"
+   # depends_on:
+    #  db:
+    #    condition: service_healthy
+    #container_name: bot3_container
+   # restart: unless-stopped
+   # environment:
+    #  - CHROME_BIN=/usr/bin/google-chrome
+     # - CHROME_DRIVER=/usr/local/bin/chromedriver
+     # - DISPLAY=:99
+   # volumes:
+     # - /dev/shm:/dev/shm
 
 networks:
   app_network:
