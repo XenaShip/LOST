@@ -38,7 +38,6 @@ services:
         condition: service_healthy
     container_name: bot1_container
     restart: unless-stopped
-    shm_size: '2gb'
 
   bot2:
     env_file:
@@ -75,7 +74,6 @@ services:
       - CHROME_BIN=/usr/bin/google-chrome
       - CHROME_DRIVER=/usr/local/bin/chromedriver
       - DISPLAY=:99
-    shm_size: '2gb'
     volumes:
       - /dev/shm:/dev/shm
 
