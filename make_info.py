@@ -28,14 +28,9 @@ def process_text_with_gpt_rooms(text):
             "text": text,
         },
     ]
-    operation = model.configure(temperature=0.3).run_deferred(messages_1)
-
-    status = operation.get_status()
-    while status.is_running:
-        time.sleep(5)
-        status = operation.get_status()
-
-    result = operation.get_result()
+    result = (
+        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
+    )
     return result.text
 
 
@@ -60,14 +55,9 @@ def process_text_with_gpt_price(text):
             "text": text,
         },
     ]
-    operation = model.configure(temperature=0.3).run_deferred(messages_1)
-
-    status = operation.get_status()
-    while status.is_running:
-        time.sleep(5)
-        status = operation.get_status()
-
-    result = operation.get_result()
+    result = (
+        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
+    )
     return result.text
 
 
@@ -92,14 +82,9 @@ def process_text_with_gpt_sq(text):
             "text": text,
         },
     ]
-    operation = model.configure(temperature=0.3).run_deferred(messages_1)
-
-    status = operation.get_status()
-    while status.is_running:
-        time.sleep(5)
-        status = operation.get_status()
-
-    result = operation.get_result()
+    result = (
+        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
+    )
     return result.text
 
 
@@ -124,14 +109,9 @@ def process_text_with_gpt_adress(text):
             "text": text,
         },
     ]
-    operation = model.configure(temperature=0.3).run_deferred(messages_1)
-
-    status = operation.get_status()
-    while status.is_running:
-        time.sleep(5)
-        status = operation.get_status()
-
-    result = operation.get_result()
+    result = (
+        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
+    )
     return result.text
 
 

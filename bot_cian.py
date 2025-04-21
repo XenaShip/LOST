@@ -64,21 +64,16 @@ def process_text_with_gpt(text):
     messages_1 = [
         {
             "role": "system",
-            "text": "Переформулируй объявление под шаблон: кол-во комнат, цена, адрес, условия, описание. Добавь эмодзи. Напиши все кратко",
+            "text": "Переформулируй объявление под шаблон: кол-во комнат, цена, адрес, условия, описание. Напиши все как можно короче. Добавь эмодзи",
         },
         {
             "role": "user",
             "text": text,
         },
     ]
-    operation = model.configure(temperature=0.3).run_deferred(messages_1)
-
-    status = operation.get_status()
-    while status.is_running:
-        time.sleep(5)
-        status = operation.get_status()
-
-    result = operation.get_result()
+    result = (
+        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
+    )
     return result.text
 
 

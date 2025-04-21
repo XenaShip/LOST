@@ -38,8 +38,6 @@ logging.basicConfig(level=logging.INFO)
 
 bot2 = Bot(token=os.getenv("TOKEN3"))
 # Конфигурация
-PHONE_NUMBER = os.getenv('PHONE_NUMBER')
-TELEGRAM_PASSWORD = os.getenv('TELEGRAM_PASSWORD')
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
@@ -67,7 +65,9 @@ def process_text_with_gpt(text):
         folder_id=os.getenv("FOLDER_ID"),
         auth=os.getenv("AUTH"),
     )
+
     model = sdk.models.completions("yandexgpt")
+
     # Variant 1: wait for the operation to complete using 5-second sleep periods
 
     messages_1 = [
@@ -80,11 +80,15 @@ def process_text_with_gpt(text):
             "text": text,
         },
     ]
-    result = (
-        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
-    )
-    return result.text
+    operation = model.configure(temperature=0.3).run_deferred(messages_1)
 
+    status = operation.get_status()
+    while status.is_running:
+        time.sleep(5)
+        status = operation.get_status()
+
+    result = operation.get_result()
+    return result.text
 
 async def download_image(image_url):
     """Скачивает изображение и сохраняет его локально."""
@@ -305,6 +309,8 @@ async def new_message_handler(event):
                     if file_path:
                         images.append(file_path)
 
+        # Сохраняем в Django-модель MESSAGE
+
         # Обрабатываем текст с Yandex GPT
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
         new_text = new_text.replace("*", "")
@@ -350,20 +356,11 @@ async def new_message_handler(event):
         # Задержка перед следующим сообщением
         await asyncio.sleep(5)
 
-
 async def main():
-    await client.connect()
-    if not await client.is_user_authorized():
-        await client.send_code_request(PHONE_NUMBER)
-        code = input('Enter the code you received: ')
-        await client.sign_in(PHONE_NUMBER, code)
-        # Если нужен пароль (включена 2FA)
-        if await client.is_user_authorized() is False:
-            await client.sign_in(password=TELEGRAM_PASSWORD)
-    async with client:
-        logger.info("Бот слушает каналы...")
-        await client.run_until_disconnected()
-
+    await asyncio.sleep(10)
+    await client.start()
+    logger.info("Бот слушает каналы...")
+    await client.run_until_disconnected()
 
 if __name__ == "__main__":
     asyncio.run(main())
