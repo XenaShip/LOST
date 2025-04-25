@@ -85,6 +85,29 @@ def process_text_with_gpt(text):
     )
     return result.text
 
+def text_with_gpt(text):
+    """Отправка текста в Yandex GPT и получение измененного текста"""
+    sdk = YCloudML(
+        folder_id=os.getenv("FOLDER_ID"),
+        auth=os.getenv("AUTH"),
+    )
+    model = sdk.models.completions("yandexgpt")
+    # Variant 1: wait for the operation to complete using 5-second sleep periods
+
+    messages_1 = [
+        {
+            "role": "system",
+            "text": "какой сегодня год?",
+        },
+        {
+            "role": "user",
+            "text": text,
+        },
+    ]
+    result = (
+        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
+    )
+    return result.text
 
 async def download_image(image_url):
     """Скачивает изображение и сохраняет его локально."""
@@ -352,6 +375,8 @@ async def new_message_handler(event):
 
 
 async def main():
+    print(YANDEX_GPT_API_KEY)
+    print(text_with_gpt(''))
     await client.connect()
     if not await client.is_user_authorized():
         await client.send_code_request(PHONE_NUMBER)
