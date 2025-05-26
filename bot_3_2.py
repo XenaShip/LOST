@@ -30,18 +30,73 @@ logger = logging.getLogger(__name__)
 # Состояния диалога
 PRICE, ROOMS, FLAT_AREA, DISTRICT, METRO_DISTANCE, CONFIRM = range(6)
 
-
-# Клавиатура выбора округа
-def get_district_keyboard():
+# Клавиатуры для разных состояний
+def get_price_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("ЦАО", callback_data="CAO")],
-        [InlineKeyboardButton("ЮАО", callback_data="YUAO")],
-        [InlineKeyboardButton("САО", callback_data="SAO")],
-        [InlineKeyboardButton("ЗАО", callback_data="ZAO")],
-        [InlineKeyboardButton("ВАО", callback_data="VAO")],
-        [InlineKeyboardButton("Не важно", callback_data="ANY")],
+        [InlineKeyboardButton("До 35000₽", callback_data="price_0_35000")],
+        [InlineKeyboardButton("35000-45000₽", callback_data="price_35000_45000")],
+        [InlineKeyboardButton("45000-65000₽", callback_data="price_45000_65000")],
+        [InlineKeyboardButton("65000-100000₽", callback_data="price_65000_100000")],
+        [InlineKeyboardButton("Более 100000₽", callback_data="price_100000_999999999")],
+        [InlineKeyboardButton("Не важно", callback_data="price_any")],
     ])
 
+def get_rooms_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Студия", callback_data="rooms_0_0")],
+        [InlineKeyboardButton("1 комната", callback_data="rooms_1_1")],
+        [InlineKeyboardButton("2 комнаты", callback_data="rooms_2_2")],
+        [InlineKeyboardButton("3 комнаты", callback_data="rooms_3_3")],
+        [InlineKeyboardButton("4+ комнат", callback_data="rooms_4_10")],
+        [InlineKeyboardButton("Не важно", callback_data="rooms_any")],
+    ])
+
+def get_area_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("До 30 м²", callback_data="area_0_30")],
+        [InlineKeyboardButton("30-50 м²", callback_data="area_30_50")],
+        [InlineKeyboardButton("50-70 м²", callback_data="area_50_70")],
+        [InlineKeyboardButton("70-90 м²", callback_data="area_70_90")],
+        [InlineKeyboardButton("Более 90 м²", callback_data="area_90_999")],
+        [InlineKeyboardButton("Не важно", callback_data="area_any")],
+    ])
+
+def get_district_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("ЦАО", callback_data="district_CAO")],
+        [InlineKeyboardButton("ЮАО", callback_data="district_YUAO")],
+        [InlineKeyboardButton("САО", callback_data="district_SAO")],
+        [InlineKeyboardButton("ЗАО", callback_data="district_ZAO")],
+        [InlineKeyboardButton("ВАО", callback_data="district_VAO")],
+        [InlineKeyboardButton("Не важно", callback_data="district_ANY")],
+    ])
+
+def get_metro_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("До 5 минут (400м)", callback_data="metro_400")],
+        [InlineKeyboardButton("До 10 минут (800м)", callback_data="metro_800")],
+        [InlineKeyboardButton("До 15 минут (1200м)", callback_data="metro_1200")],
+        [InlineKeyboardButton("До 20 минут (1600м)", callback_data="metro_1600")],
+        [InlineKeyboardButton("Не важно", callback_data="metro_any")],
+    ])
+
+def get_confirm_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_yes"),
+            InlineKeyboardButton("❌ Отменить", callback_data="confirm_no")
+        ],
+    ])
+
+# Добавим функцию для получения основной клавиатуры
+def get_main_keyboard():
+    keyboard = [
+        [KeyboardButton("/start")],
+        [KeyboardButton("/subscribe")],
+        [KeyboardButton("/my_subscription")],
+        [KeyboardButton("/unsubscribe")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 # Асинхронные операции с БД
 @sync_to_async
@@ -50,7 +105,6 @@ def get_subscription(user_id):
         return Subscription.objects.get(user_id=user_id)
     except Subscription.DoesNotExist:
         return None
-
 
 @sync_to_async
 def update_or_create_subscription(user_id, username, params):
@@ -70,7 +124,6 @@ def update_or_create_subscription(user_id, username, params):
         }
     )
 
-
 @sync_to_async
 def deactivate_subscription(user_id):
     try:
@@ -81,165 +134,189 @@ def deactivate_subscription(user_id):
     except Subscription.DoesNotExist:
         return False
 
-
 # Команды бота
 async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         "🏡 Бот подписки на объявления о недвижимости\n\n"
-        "Доступные команды:\n"
-        "/subscribe - Настроить подписку\n"
-        "/my_subscription - Просмотреть текущую подписку\n"
-        "/unsubscribe - Отписаться от уведомлений"
+        "Выберите действие:\n\n"
+        "/subscribe - подписаться на обновления,\n\n"
+        "/my_subscription - моя подписка,\n\n"
+        "/unsubscribe - отписаться",
+        reply_markup=get_main_keyboard()
     )
-
 
 async def subscribe(update: Update, context: CallbackContext) -> int:
     context.user_data.clear()
+    # Отправляем сообщение с инлайн клавиатурой для выбора цены, сохраняя основную клавиатуру
     await update.message.reply_text(
-        "💰 Укажите ваш бюджет в рублях (мин и макс через пробел):\n"
-        "Пример: 5000000 10000000\n"
-        "Или напишите 'не важно'"
+        "💰 Выберите диапазон цен:",
+        reply_markup=get_price_keyboard()
     )
     return PRICE
 
-
-async def get_price(update: Update, context: CallbackContext) -> int:
-    text = update.message.text.lower()
-    if text == 'не важно':
+async def process_price(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    if not query:  # Если callback_query отсутствует, значит диалог был прерван
+        context.user_data.clear()
+        return ConversationHandler.END
+        
+    data = query.data.split('_')
+    if data[1] == 'any':
         context.user_data['min_price'] = None
         context.user_data['max_price'] = None
     else:
-        try:
-            min_price, max_price = map(int, text.split())
-            context.user_data['min_price'] = min_price
-            context.user_data['max_price'] = max_price
-        except:
-            await update.message.reply_text("❌ Неверный формат. Попробуйте снова")
-            return PRICE
-
-    await update.message.reply_text(
-        "🚪 Сколько комнат вам нужно?\n"
-        "Формат: от до\nПример: 1 3\n"
-        "Или напишите 'не важно'"
+        context.user_data['min_price'] = int(data[1])
+        context.user_data['max_price'] = int(data[2])
+    
+    await query.edit_message_text(
+        "🚪 Выберите количество комнат:",
+        reply_markup=get_rooms_keyboard()
     )
     return ROOMS
 
-
-async def get_rooms(update: Update, context: CallbackContext) -> int:
-    text = update.message.text.lower()
-    if text == 'не важно':
+async def process_rooms(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    if not query:  # Если callback_query отсутствует, значит диалог был прерван
+        context.user_data.clear()
+        return ConversationHandler.END
+        
+    data = query.data.split('_')
+    if data[1] == 'any':
         context.user_data['min_rooms'] = None
         context.user_data['max_rooms'] = None
     else:
-        try:
-            rooms = list(map(int, text.split()))
-            context.user_data['min_rooms'] = rooms[0]
-            context.user_data['max_rooms'] = rooms[1] if len(rooms) > 1 else rooms[0]
-        except:
-            await update.message.reply_text("❌ Неверный формат. Попробуйте снова")
-            return ROOMS
-
-    await update.message.reply_text(
-        "📏 Укажите желаемую площадь квартиры в м² (мин и макс через пробел):\n"
-        "Пример: 30 60\n"
-        "Или напишите 'не важно'"
+        context.user_data['min_rooms'] = int(data[1])
+        context.user_data['max_rooms'] = int(data[2])
+    
+    await query.edit_message_text(
+        "📏 Выберите площадь квартиры:",
+        reply_markup=get_area_keyboard()
     )
     return FLAT_AREA
 
-
-async def get_flat_area(update: Update, context: CallbackContext) -> int:
-    text = update.message.text.lower()
-    if text == 'не важно':
+async def process_area(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    if not query:  # Если callback_query отсутствует, значит диалог был прерван
+        context.user_data.clear()
+        return ConversationHandler.END
+        
+    data = query.data.split('_')
+    if data[1] == 'any':
         context.user_data['min_flat'] = None
         context.user_data['max_flat'] = None
     else:
-        try:
-            min_flat, max_flat = map(int, text.split())
-            context.user_data['min_flat'] = min_flat
-            context.user_data['max_flat'] = max_flat
-        except:
-            await update.message.reply_text("❌ Неверный формат. Попробуйте снова")
-            return FLAT_AREA
-
-    await update.message.reply_text(
+        context.user_data['min_flat'] = int(data[1])
+        context.user_data['max_flat'] = int(data[2])
+    
+    await query.edit_message_text(
         "🗺️ Выберите округ:",
         reply_markup=get_district_keyboard()
     )
     return DISTRICT
 
-
-async def get_district(update: Update, context: CallbackContext) -> int:
+async def process_district(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
-    context.user_data['district'] = query.data
-    await query.edit_message_text(f"Выбран округ: {dict(Subscription.DISTRICT_CHOICES)[query.data]}")
-
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text="🚇 Укажите максимальное расстояние до метро в метрах:\n"
-             "Пример: 500\nИли напишите 'не важно'"
+    
+    if not query:  # Если callback_query отсутствует, значит диалог был прерван
+        context.user_data.clear()
+        return ConversationHandler.END
+        
+    data = query.data.split('_')
+    context.user_data['district'] = data[1]
+    
+    await query.edit_message_text(
+        "🚇 Выберите максимальное расстояние до метро:",
+        reply_markup=get_metro_keyboard()
     )
     return METRO_DISTANCE
 
-
-async def get_metro_distance(update: Update, context: CallbackContext) -> int:
-    text = update.message.text.lower()
-    if text == 'не важно':
+async def process_metro(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    if not query:  # Если callback_query отсутствует, значит диалог был прерван
+        context.user_data.clear()
+        return ConversationHandler.END
+        
+    data = query.data.split('_')
+    if data[1] == 'any':
         context.user_data['max_metro_distance'] = None
     else:
-        try:
-            context.user_data['max_metro_distance'] = int(text)
-        except:
-            await update.message.reply_text("❌ Введите число метров")
-            return METRO_DISTANCE
+        context.user_data['max_metro_distance'] = int(data[1])
 
     # Формируем сводку
     data = context.user_data
     district_name = dict(Subscription.DISTRICT_CHOICES).get(data.get('district'), 'Не важно')
 
-    text = (
-        "✅ Ваши критерии подписки:\n\n"
+    summary = (
+        "✅ Проверьте параметры подписки:\n\n"
         f"• Цена: {data.get('min_price', 'не важно')} - {data.get('max_price', 'не важно')} руб\n"
         f"• Комнат: {data.get('min_rooms', 'не важно')}-{data.get('max_rooms', 'не важно')}\n"
         f"• Площадь: {data.get('min_flat', 'не важно')}-{data.get('max_flat', 'не важно')} м²\n"
         f"• Округ: {district_name}\n"
         f"• До метро: ≤{data.get('max_metro_distance', 'не важно')} м\n\n"
-        "Сохранить подписку? (да/нет)"
+        "Подтвердите ваш выбор:"
     )
 
-    await update.message.reply_text(text)
+    await query.edit_message_text(
+        text=summary,
+        reply_markup=get_confirm_keyboard()
+    )
     return CONFIRM
 
-
-async def confirm_subscription(update: Update, context: CallbackContext) -> int:
-    keyboard = [[KeyboardButton("/start")]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-    if update.message.text.lower() == 'да':
+async def process_confirmation(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    if not query:  # Если callback_query отсутствует, значит диалог был прерван
+        context.user_data.clear()
+        return ConversationHandler.END
+        
+    if query.data == 'confirm_yes':
         user = update.effective_user
         await update_or_create_subscription(
             user_id=user.id,
             username=user.username,
             params=context.user_data
         )
-        await update.message.reply_text("🎉 Подписка успешно сохранена!", reply_markup=reply_markup)
+        await query.edit_message_text("🎉 Подписка успешно сохранена!")
+        # Отправляем новое сообщение с основной клавиатурой
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Вы можете продолжить работу с ботом:",
+            reply_markup=get_main_keyboard()
+        )
     else:
-        await update.message.reply_text("Настройка подписки отменена", reply_markup=reply_markup)
-
+        await query.edit_message_text("Настройка подписки отменена. Нажмите /subscribe, чтобы начать заново.")
+        # Отправляем новое сообщение с основной клавиатурой
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Вы можете продолжить работу с ботом:",
+            reply_markup=get_main_keyboard()
+        )
+    
+    context.user_data.clear()  # Очищаем данные пользователя в конце диалога
     return ConversationHandler.END
-
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    await update.message.reply_text("Настройка подписки отменена")
+    context.user_data.clear()  # Очищаем данные пользователя
+    await update.message.reply_text(
+        "Настройка подписки отменена. Нажмите /subscribe, чтобы начать заново.",
+        reply_markup=get_main_keyboard()  # Возвращаем основную клавиатуру
+    )
     return ConversationHandler.END
 
-
 async def my_subscription(update: Update, context: CallbackContext) -> None:
-    keyboard = [[KeyboardButton("/start")]]  # Кнопка /start
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
     sub = await get_subscription(update.effective_user.id)
     if sub:
         district_name = dict(Subscription.DISTRICT_CHOICES).get(sub.district, 'Не важно')
-
         text = (
             "📋 Ваша текущая подписка:\n\n"
             f"• Цена: {sub.min_price or 'не важно'} - {sub.max_price or 'не важно'} руб\n"
@@ -247,52 +324,46 @@ async def my_subscription(update: Update, context: CallbackContext) -> None:
             f"• Площадь: {sub.min_flat or 'не важно'}-{sub.max_flat or 'не важно'} м²\n"
             f"• Округ: {district_name}\n"
             f"• До метро: ≤{sub.max_metro_distance or 'не важно'} м\n\n"
-            "Изменить параметры: /subscribe\n"
-            "Отписаться: /unsubscribe"
+            "Для изменения параметров нажмите /subscribe"
         )
     else:
-        text = "У вас нет активной подписки. Настройте её через /subscribe"
-    await update.message.reply_text(text, reply_markup=reply_markup)
-
+        text = "У вас нет активной подписки. Для создания нажмите /subscribe"
+    
+    await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
 async def unsubscribe(update: Update, context: CallbackContext) -> None:
-    keyboard = [[KeyboardButton("/start")]]  # Кнопка /start
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-    success = await deactivate_subscription(update.effective_user.id)
-    if success:
-        await update.message.reply_text("🔕 Вы успешно отписались от уведомлений", reply_markup=reply_markup)
+    if await deactivate_subscription(update.effective_user.id):
+        await update.message.reply_text("✅ Вы успешно отписались от уведомлений", reply_markup=get_main_keyboard())
     else:
-        await update.message.reply_text("У вас нет активной подписки", reply_markup=reply_markup)
-
-async def hide_keyboard(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text(
-        "⌨️ Клавиатура скрыта.",
-        reply_markup=ReplyKeyboardRemove()
-    )
+        await update.message.reply_text("❌ У вас нет активной подписки", reply_markup=get_main_keyboard())
 
 def main() -> None:
     application = Application.builder().token(os.getenv("TOKEN3")).build()
-    application.add_handler(CommandHandler("hide", hide_keyboard))
+
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('subscribe', subscribe)],
         states={
-            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_price)],
-            ROOMS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_rooms)],
-            FLAT_AREA: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_flat_area)],
-            DISTRICT: [CallbackQueryHandler(get_district)],
-            METRO_DISTANCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_metro_distance)],
-            CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_subscription)],
+            PRICE: [CallbackQueryHandler(process_price)],
+            ROOMS: [CallbackQueryHandler(process_rooms)],
+            FLAT_AREA: [CallbackQueryHandler(process_area)],
+            DISTRICT: [CallbackQueryHandler(process_district)],
+            METRO_DISTANCE: [CallbackQueryHandler(process_metro)],
+            CONFIRM: [CallbackQueryHandler(process_confirmation)],
         },
-        fallbacks=[CommandHandler('cancel', cancel)],
+        fallbacks=[
+            CommandHandler('cancel', cancel),
+            CommandHandler('start', cancel),  # Добавляем обработку /start как fallback
+            MessageHandler(filters.COMMAND, cancel),  # Добавляем обработку любых команд как fallback
+        ],
     )
 
-    application.add_handler(CommandHandler("start", start))
     application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.Regex("start"), start))
     application.add_handler(CommandHandler("my_subscription", my_subscription))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe))
 
-    application.run_polling()
-
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()

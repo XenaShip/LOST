@@ -4,6 +4,8 @@ import random
 import logging
 import time
 from datetime import datetime
+
+import telethon
 from aiogram import Bot
 import django
 import requests
@@ -43,7 +45,7 @@ TELEGRAM_PASSWORD = os.getenv('TELEGRAM_PASSWORD')
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-SESSION_NAME = "session_name"
+SESSION_NAME = "session_name2"
 CHANNEL_USERNAMES = [
     "loltestneedxenaship",
     "coliferent",
@@ -375,18 +377,18 @@ async def new_message_handler(event):
 
 
 async def main():
-    print(YANDEX_GPT_API_KEY)
-    print(text_with_gpt(''))
     await client.connect()
     if not await client.is_user_authorized():
         await client.send_code_request(PHONE_NUMBER)
-        code = input('Enter the code you received: ')
-        await client.sign_in(PHONE_NUMBER, code)
-        # Если нужен пароль (включена 2FA)
-        if await client.is_user_authorized() is False:
-            await client.sign_in(password=TELEGRAM_PASSWORD)
+        code = input('Введите код из Telegram: ')
+        try:
+            await client.sign_in(PHONE_NUMBER, code)
+        except telethon.errors.SessionPasswordNeededError:
+            password = os.getenv('TELEGRAM_PASSWORD')
+            await client.sign_in(password=password)
+
     async with client:
-        logger.info("Бот слушает каналы...")
+        logger.info("Бот запущен и слушает каналы...")
         await client.run_until_disconnected()
 
 
