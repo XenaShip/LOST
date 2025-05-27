@@ -1,43 +1,48 @@
-FROM python:3.11-bookworm
+FROM python:3.11-slim
 
 # Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
-    wget \
-    unzip \
     curl \
     gnupg \
-    && rm -rf /var/lib/apt/lists/*
-
-# Установка Chrome (новый метод)
-RUN mkdir -p /etc/apt/keyrings \
-    && wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor > /etc/apt/keyrings/google-chrome.gpg \
-    && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y \
-    google-chrome-stable \
+    unzip \
+    wget \
+    xvfb \
     libnss3 \
     libxss1 \
     libasound2 \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
+    libgbm1 \
+    libu2f-udev \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
     fonts-liberation \
+    libdrm2 \
+    libxext6 \
+    libxfixes3 \
+    libxrender1 \
+    libxi6 \
+    libxtst6 \
+    libappindicator3-1 \
+    xdg-utils \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка ChromeDriver
-RUN wget https://chromedriver.storage.googleapis.com/$(curl -s https://chromedriver.storage.googleapis.com/LATEST_RELEASE)/chromedriver_linux64.zip \
-    && unzip chromedriver_linux64.zip \
-    && mv chromedriver /usr/local/bin/ \
-    && chmod +x /usr/local/bin/chromedriver \
-    && rm chromedriver_linux64.zip
+# Установка Google Chrome
+RUN curl -sSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-linux-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && apt-get install -y google-chrome-stable && \
+    rm -rf /var/lib/apt/lists/*
 
-# Остальная часть Dockerfile
+# Установка зависимостей Python
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Копируем исходный код
 COPY . .
 
-ENV CHROME_BIN=/usr/bin/google-chrome
-ENV CHROME_DRIVER=/usr/local/bin/chromedriver
-ENV DISPLAY=:99
-
+# Запуск бота
 CMD ["python", "bot_cian.py"]
