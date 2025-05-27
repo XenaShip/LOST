@@ -99,59 +99,62 @@ def escape_md_v2(text):
     special_chars = r"_*[]()~`>#+-=|{}.!"
     return "".join(f"\\{char}" if char in special_chars else char for char in text)
 
+
 def fetch_page_data(url):
-    """Функция загружает страницу, извлекает текст и ссылки на изображения"""
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless")  # Без графического интерфейса
+    """Загружает страницу через undetected_chromedriver и извлекает текст и изображения"""
+    import undetected_chromedriver as uc
+
+    options = uc.ChromeOptions()
+    options.add_argument("--headless=new")  # важно: новый режим
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--ignore-certificate-errors")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--disable-web-security")
     options.add_argument("--disable-features=IsolateOrigins,site-per-process")
     options.add_argument("--disable-site-isolation-trials")
+    options.add_argument("--remote-debugging-port=9222")
+    options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
 
-    # Устанавливаем "человеческий" User-Agent
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-    )
+    driver = None
+    try:
+        driver = uc.Chrome(options=options)
+        driver.set_page_load_timeout(60)
+        logging.info(f"Открываю страницу: {url}")
+        driver.get(url)
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    logging.info(f"Открываю страницу: {url}")
-    driver.get(url)
+        WebDriverWait(driver, 30).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
 
-    # Ждем загрузки страницы
-    time.sleep(10)
+        # Прокрутка страницы
+        for _ in range(3):
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1)
 
-    # Прокручиваем страницу вниз (если контент загружается при прокрутке)
-    for _ in range(5):
-        ActionChains(driver).send_keys(Keys.END).perform()
-        time.sleep(1)
+        page_text = driver.find_element(By.TAG_NAME, "body").text
 
-    # 1️⃣ Извлекаем весь текст со страницы
-    full_text = driver.execute_script("return document.body.innerText")
+        images = []
+        for img in driver.find_elements(By.TAG_NAME, "img"):
+            src = img.get_attribute("src")
+            if src and src.startswith(("http://", "https://")):
+                images.append(src)
+            if len(images) >= 10:
+                break
 
-    # 2️⃣ Извлекаем самый длинный текстовый блок
-    text_blocks = [el.text for el in driver.find_elements(By.TAG_NAME, "div") if el.text.strip()]
-    longest_text = max(text_blocks, key=len, default="")  # Берем самый длинный
+        return page_text, images
 
-    # Если полный текст слишком короткий, берем текст из div
-    page_text = longest_text if len(longest_text) > 100 else full_text
+    except Exception as e:
+        logging.error(f"Ошибка при загрузке страницы: {str(e)}")
+        return "", []
+    finally:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
 
-    # 3️⃣ Извлекаем изображения
-    images = []
-    for img in driver.find_elements(By.TAG_NAME, "img"):
-        img_url = img.get_attribute("src")
-        if img_url and img_url.startswith("http"):
-            images.append(img_url)
-        if len(images) >= 10:
-            break
 
-    driver.quit()
-    logging.info(f"Текст страницы (200 символов): {page_text[:200]}...")
-    logging.info(f"Найдено {len(images)} изображений")
-    return page_text, images
 
 
 
