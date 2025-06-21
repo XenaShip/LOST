@@ -8,17 +8,21 @@ WORKDIR /bot
 COPY . .
 
 # Устанавливаем зависимости
-RUN pip install --upgrade pip
-RUN apt-get update && apt-get install -y \
+RUN pip install --upgrade pip && \
+    apt-get update && \
+    apt-get install -y \
     wget \
     unzip \
     chromium \
     chromium-driver \
-    && rm -rf /var/lib/apt/lists/*
-RUN pip install --upgrade setuptools wheel
-RUN pip install pyaes intervaltree --no-binary :all:
-RUN pip install undetected-chromedriver
-RUN pip install --no-cache-dir -r requirements.txt
+    && rm -rf /var/lib/apt/lists/* && \
+    pip install --upgrade setuptools wheel && \
+    pip install pyaes intervaltree --no-binary :all: && \
+    pip install undetected-chromedriver && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Указываем команду по умолчанию
-CMD ["python", "bot.py"]
+CMD ["sh", "-c", "python manage.py makemigrations main && \
+                  python manage.py migrate && \
+                  python bot.py || \
+                  (echo 'Failed, restarting...'; sleep 30; exit 1)"]
