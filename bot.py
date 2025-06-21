@@ -46,22 +46,14 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 SESSION_NAME = "session_name2"
-CHANNEL_USERNAMES = [
-    "loltestneedxenaship",
-    "coliferent",
-    "arendamsk_mo",
-    "lvngrm_msk",
-    "Sdat_Kvartiru0",
-    "bestflats_msk",
-    "nebabushkin_msk",
-    "loltestneedxenaship",
-]
+
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 YANDEX_GPT_API_KEY = os.getenv("YANDEX_GPT_API_KEY")
 DOWNLOAD_FOLDER = "downloads/"
 
 # Инициализация клиента Telethon
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH, system_version='1.2.3-zxc-custom', device_model='aboba-linux-custom', app_version='1.0.1')
+
 
 def process_text_with_gpt(text):
     """Отправка текста в Yandex GPT и получение измененного текста"""
@@ -292,8 +284,9 @@ def is_ad_match_subscription(ad_data, subscription):
         return False
 
 
-@client.on(events.NewMessage(chats=CHANNEL_USERNAMES))
+# @client.on(events.NewMessage(chats=channel_entities))
 async def new_message_handler(event):
+    logger.info(f"Новое сообщение из канала: {event.chat.username or event.chat.title}")
     if event.message:
         text = event.message.text or ""
         images = []
@@ -339,7 +332,7 @@ async def new_message_handler(event):
             images=images if images else None,
             new_text=new_text
         )
-        if new_text != 'Нет' and new_text != 'Нет.':
+        if not(new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
             address=process_text_with_gpt_adress(new_text)
             coords=get_coords_by_address(address)
 
@@ -366,7 +359,7 @@ async def new_message_handler(event):
             asyncio.create_task(check_subscriptions_and_notify(info))
         # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)
-        if new_text and (new_text != 'Нет' and new_text != 'Нет.'):
+        if new_text and not(new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
             if images:
                 await send_images_with_text(bot, TELEGRAM_CHANNEL_ID, new_text, images)
             else:
@@ -386,6 +379,30 @@ async def main():
         except telethon.errors.SessionPasswordNeededError:
             password = os.getenv('TELEGRAM_PASSWORD')
             await client.sign_in(password=password)
+
+    # ✅ Получаем сущности каналов по username
+    CHANNEL_USERNAMES = [
+        "arendamsc",
+        "onmojetprogat",
+        "loltestneedxenaship",
+        "coliferent",
+        "arendamsk_mo",
+        "lvngrm_msk",
+        "Sdat_Kvartiru0",
+        "bestflats_msk",
+        "nebabushkin_msk",
+    ]
+
+    try:
+        channel_entities = await asyncio.gather(*[client.get_entity(username) for username in CHANNEL_USERNAMES])
+    except Exception as e:
+        logger.error(f"Ошибка при получении каналов: {e}")
+        return
+
+    # ✅ Регистрируем обработчик событий вручную
+    @client.on(events.NewMessage(chats=channel_entities))
+    async def handler_wrapper(event):
+        await new_message_handler(event)
 
     async with client:
         logger.info("Бот запущен и слушает каналы...")
