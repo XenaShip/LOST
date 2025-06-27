@@ -10,6 +10,7 @@ from aiogram import Bot
 import django
 import requests
 from anyio import current_time
+from django.utils.regex_helper import contains
 from telegram import Bot, InputMediaPhoto
 from telegram.error import RetryAfter
 from telethon import TelegramClient, events
@@ -67,7 +68,7 @@ def process_text_with_gpt(text):
     messages_1 = [
         {
             "role": "system",
-            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание, контакты. Если заданный текст- не объявление, ответь словом нет. Добавь эмодзи в каждый пункт, если это объявление",
+            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание. Если заданный текст- не объявление, ответь словом нет. Контакты не указывай, никакие ссылки тоже. Добавь эмодзи в каждый пункт, если это объявление",
         },
         {
             "role": "user",
@@ -92,6 +93,42 @@ def text_with_gpt(text):
         {
             "role": "system",
             "text": "какой сегодня год?",
+        },
+        {
+            "role": "user",
+            "text": text,
+        },
+    ]
+    result = (
+        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
+    )
+    return result.text
+
+def process_text_with_gpt2(text):
+    """Отправка текста в Yandex GPT и получение измененного текста"""
+    sdk = YCloudML(
+        folder_id=os.getenv("FOLDER_ID"),
+        auth=os.getenv("AUTH"),
+    )
+    model = sdk.models.completions("yandexgpt")
+    # Variant 1: wait for the operation to complete using 5-second sleep periods
+
+    messages_1 = [
+        {
+            "role": "system",
+            "text": "Извлекай контактную информацию из текста объявлений и преобразуй её в чистую Telegram-ссылку. НЕ УКАЗЫВАЙ ССЫЛКИ НА ДРУГИЕ РЕСУРСЫ И КАНАЛЫ, ТОЛЬКО НА ПРОФИЛЬ "
+            "Правила обработки:\n"
+            "1. Если найдешь фразы 'написать', 'контакты:', 'связь:' или подобные - извлеки контактные данные\n"
+            "2. Для Telegram контактов возвращай только чистую ссылку в формате tg://user?id=XXXXX\n"
+            "3. Если контакт указан как @username - оставь так же\n"
+            "4. Телефонные номера и другие контакты оставляй без изменений\n"
+            "5. Всё остальное содержимое объявления не изменяй\n\n"
+            "Примеры преобразования:\n"
+            "1. 'Контакты: [Анна](tg://user?id=12345)' → 'tg://user?id=12345'\n"
+            "2. 'Написать: @ivanov' → @ivanov\n"
+            "3. 'Телефон: +79161234567' → оставить без изменений\n"
+            "4. 'Связь: [Менеджер](https://t.me/manager)' → https://t.me/manager\n\n"
+            "Важно: возвращай только саму ссылку, без дополнительного текста и форматирования!"
         },
         {
             "role": "user",
@@ -218,8 +255,7 @@ async def send_notification(user_id: int, ad_data: dict, message):
         else:
             await bot2.send_message(
                 chat_id=user_id,
-                text=message_text,
-                parse_mode="Markdown"
+                text=message_text
             )
 
     except RetryAfter as e:
@@ -324,8 +360,10 @@ async def new_message_handler(event):
                         images.append(file_path)
 
         # Обрабатываем текст с Yandex GPT
+        contacts = await asyncio.to_thread(process_text_with_gpt2, text)
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
         new_text = new_text.replace("*", "")
+        new_text = new_text + " Контакты: " + contacts
         logger.info(f"Обработанный текст: {new_text}")
         message = await sync_to_async(MESSAGE.objects.create)(
             text=text,
@@ -335,7 +373,6 @@ async def new_message_handler(event):
         if not(new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
             address=process_text_with_gpt_adress(new_text)
             coords=get_coords_by_address(address)
-
             def parse_flat_area(value):
                 try:
                     if isinstance(value, str):
@@ -385,7 +422,6 @@ async def main():
         "arendamsc",
         "onmojetprogat",
         "loltestneedxenaship",
-        "coliferent",
         "arendamsk_mo",
         "lvngrm_msk",
         "Sdat_Kvartiru0",
