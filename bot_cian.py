@@ -322,7 +322,6 @@ async def message_handler(message: Message):
         images=images if images else None,
         new_text=new_text + f' Контакты {url}'
     )
-
     if new_text != 'Нет' and new_text != 'Нет.':
         address = process_text_with_gpt_adress(new_text)
         coords = get_coords_by_address(address)

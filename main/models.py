@@ -3,6 +3,7 @@ from django.db import models
 class MESSAGE(models.Model):
     text = models.TextField(blank=True, null=True)
     images = models.JSONField(blank=True, null=True)  # Для хранения списка URL изображений
+    original_contacts = models.TextField(null=True, blank=True)
     new_text = models.TextField(blank=True, null=True)
     def __str__(self):
         return self.text
