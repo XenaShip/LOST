@@ -68,7 +68,7 @@ def process_text_with_gpt(text):
     messages_1 = [
         {
             "role": "system",
-            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание. Если заданный текст- не объявление, ответь словом нет. Контакты не указывай, никакие ссылки тоже. Добавь эмодзи в каждый пункт, если это объявление",
+            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание. Если заданный текст- не объявление, ответь словом нет. Если это человек или семья ищет квартиру, а не объявление о сдачи, так же ответь нет. Контакты не указывай, никакие ссылки тоже. Добавь эмодзи в каждый пункт, если это объявление",
         },
         {
             "role": "user",
@@ -223,7 +223,8 @@ async def send_notification(user_id: int, ad_data: dict, message):
     Отправляет уведомление о новом объявлении пользователю
     """
     try:
-        message_text = message.new_text
+        contacts = await asyncio.to_thread(process_text_with_gpt2, message.text)
+        message_text = message.new_text + " Контакты: " + contacts
         images = ad_data.get('images') or []  # Защита от None
 
         if images and isinstance(images, list):  # Явная проверка
@@ -363,7 +364,6 @@ async def new_message_handler(event):
         contacts = await asyncio.to_thread(process_text_with_gpt2, text)
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
         new_text = new_text.replace("*", "")
-        new_text = new_text + " Контакты: " + contacts
         logger.info(f"Обработанный текст: {new_text}")
         message = await sync_to_async(MESSAGE.objects.create)(
             text=text,
@@ -371,6 +371,7 @@ async def new_message_handler(event):
             new_text=new_text
         )
         if not(new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
+            new_text = new_text + " Контакты: " + contacts
             address=process_text_with_gpt_adress(new_text)
             coords=get_coords_by_address(address)
             def parse_flat_area(value):
