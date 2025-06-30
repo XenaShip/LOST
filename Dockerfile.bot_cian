@@ -1,12 +1,15 @@
 FROM python:3.11-slim
 
+ENV PYTHONUNBUFFERED=1
+
 # Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
-    curl \
-    gnupg \
-    unzip \
     wget \
-    xvfb \
+    curl \
+    unzip \
+    gnupg \
+    ca-certificates \
+    fonts-liberation \
     libnss3 \
     libxss1 \
     libasound2 \
@@ -18,8 +21,6 @@ RUN apt-get update && apt-get install -y \
     libxcomposite1 \
     libxdamage1 \
     libxrandr2 \
-    fonts-liberation \
-    libdrm2 \
     libxext6 \
     libxfixes3 \
     libxrender1 \
@@ -27,21 +28,30 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     libappindicator3-1 \
     xdg-utils \
-    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка Google Chrome
-RUN curl -sSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-linux-keyring.gpg && \
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
+# Установка Google Chrome (стабильная версия, совпадающая с chromedriver)
+RUN curl -sSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list && \
     apt-get update && apt-get install -y google-chrome-stable && \
     rm -rf /var/lib/apt/lists/*
 
-# Установка зависимостей Python
+# Проверка установленной версии Chrome (можно удалить после отладки)
+RUN google-chrome --version
+
+# Установка ChromeDriver (124.0.6367.91) из нового хранилища Chrome for Testing
+RUN curl -sSL "https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/124.0.6367.91/linux64/chromedriver-linux64.zip" -o chromedriver.zip && \
+    unzip chromedriver.zip && \
+    mv chromedriver-linux64/chromedriver /usr/local/bin/chromedriver && \
+    chmod +x /usr/local/bin/chromedriver && \
+    rm -rf chromedriver.zip chromedriver-linux64
+
+# Установка Python-зависимостей
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# Копируем исходный код
+# Копируем весь проект
 COPY . .
 
 # Запуск бота
