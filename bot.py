@@ -68,7 +68,7 @@ def process_text_with_gpt(text):
     messages_1 = [
         {
             "role": "system",
-            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание. Если заданный текст- не объявление, ответь словом нет. Если это человек или семья ищет квартиру, а не объявление о сдачи, так же ответь нет. Контакты не указывай, никакие ссылки тоже. Добавь эмодзи в каждый пункт, если это объявление",
+            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание. Если заданный текст- не объявление, ответь словом нет. Если это человек или семья ищет квартиру, а не объявление о сдачи, так же ответь нет. Контакты не указывай, никакие ссылки тоже. Добавь эмодзи в каждый пункт, если это объявление. Ответь одним словом",
         },
         {
             "role": "user",
@@ -79,6 +79,33 @@ def process_text_with_gpt(text):
         sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
     )
     return result.text
+
+
+def process_text_with_gpt3(text):
+    """Отправка текста в Yandex GPT и получение измененного текста"""
+    sdk = YCloudML(
+        folder_id=os.getenv("FOLDER_ID"),
+        auth=os.getenv("AUTH"),
+    )
+    model = sdk.models.completions("yandexgpt")
+    # Variant 1: wait for the operation to complete using 5-second sleep periods
+
+    messages_1 = [
+        {
+            "role": "system",
+            "text": "Посмотри текст. Если в текст - объявление о продаже (НЕ об аренде и используются слова 'федеральный застройщик', 'акция', 'ипотека') квартиры или квартир ответь словом нет. Если это объявление об аренде квартиры ответь да. Ответь одним словом",
+        },
+        {
+            "role": "user",
+            "text": text,
+        },
+    ]
+    result = (
+        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
+    )
+    return result.text
+
+
 
 def text_with_gpt(text):
     """Отправка текста в Yandex GPT и получение измененного текста"""
@@ -362,18 +389,24 @@ async def new_message_handler(event):
 
         # Обрабатываем текст с Yandex GPT
         contacts = await asyncio.to_thread(process_text_with_gpt2, text)
+        help_text = await asyncio.to_thread(process_text_with_gpt3, text)
+        print(help_text)
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
         new_text = new_text.replace("*", "")
+        if not (help_text.strip().lower().startswith("да")):
+            print(new_text)
+            new_text = 'нет'
         logger.info(f"Обработанный текст: {new_text}")
         message = await sync_to_async(MESSAGE.objects.create)(
             text=text,
             images=images if images else None,
             new_text=new_text
         )
-        if not(new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
+        if not (new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
             new_text = new_text + " Контакты: " + contacts
-            address=process_text_with_gpt_adress(new_text)
-            coords=get_coords_by_address(address)
+            address = process_text_with_gpt_adress(new_text)
+            coords = get_coords_by_address(address)
+
             def parse_flat_area(value):
                 try:
                     if isinstance(value, str):
@@ -395,9 +428,9 @@ async def new_message_handler(event):
                 rooms=process_text_with_gpt_rooms(new_text)
             )
             asyncio.create_task(check_subscriptions_and_notify(info))
-        # Отправляем сообщение в Telegram
+            # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)
-        if new_text and not(new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
+        if new_text and not (new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
             if images:
                 await send_images_with_text(bot, TELEGRAM_CHANNEL_ID, new_text, images)
             else:
