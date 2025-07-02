@@ -68,7 +68,7 @@ def process_text_with_gpt(text):
     messages_1 = [
         {
             "role": "system",
-            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание. Если заданный текст- не объявление, ответь словом нет. Если это человек или семья ищет квартиру, а не объявление о сдачи, так же ответь нет. Контакты не указывай, никакие ссылки тоже. Добавь эмодзи в каждый пункт, если это объявление. Ответь одним словом",
+            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание. Если заданный текст- не объявление, ответь словом нет. Если это человек или семья ищет квартиру, а не объявление о сдачи, так же ответь нет. Контакты не указывай, никакие ссылки тоже. Добавь эмодзи в каждый пункт, если это объявление. Ответь одним словом. не пиши ответ да или нет",
         },
         {
             "role": "user",
@@ -392,9 +392,9 @@ async def new_message_handler(event):
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
         print(help_text)
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
+        print(new_text)
         new_text = new_text.replace("*", "")
-        if not (help_text.strip().lower().startswith("да")):
-            print(new_text)
+        if not (help_text.strip().lower().startswith("да") or help_text.strip().lower().startswith("ответ: да")):
             new_text = 'нет'
         logger.info(f"Обработанный текст: {new_text}")
         message = await sync_to_async(MESSAGE.objects.create)(
