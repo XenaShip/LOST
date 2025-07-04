@@ -13,14 +13,11 @@ RUN apt-get update && apt-get install -y \
     libnss3 \
     libxss1 \
     libasound2 \
-    libatk-bridge2.0-0 \
-    libgtk-3-0 \
-    libgbm1 \
-    libu2f-udev \
-    libx11-xcb1 \
     libxcomposite1 \
     libxdamage1 \
     libxrandr2 \
+
+
     libxext6 \
     libxfixes3 \
     libxrender1 \
@@ -28,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     libappindicator3-1 \
     xdg-utils \
+
     && rm -rf /var/lib/apt/lists/*
 
 # Установка Google Chrome (стабильная версия, совпадающая с chromedriver)
@@ -53,6 +51,3 @@ RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r re
 
 # Копируем весь проект
 COPY . .
-
-# Запуск бота
-CMD ["python", "bot_cian.py"]

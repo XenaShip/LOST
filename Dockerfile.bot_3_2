@@ -1,24 +1,31 @@
-# Базовый образ с Python
-FROM python:3.11-slim
+FROM python:3.10-slim
 
-# Устанавливаем рабочую директорию внутри контейнера
-WORKDIR /bot_3_2
+WORKDIR /app
 
-# Копируем все файлы в контейнер
-COPY . .
-
-# Устанавливаем зависимости
-RUN pip install --upgrade pip
 RUN apt-get update && apt-get install -y \
     wget \
     unzip \
-    chromium \
-    chromium-driver \
+    libglib2.0-0 \
+    libnss3 \
+    libgconf-2-4 \
+    libfontconfig1 \
+    libxss1 \
+    libappindicator1 \
+    libasound2 \
+    libxtst6 \
+    libxrandr2 \
+    libu2f-udev \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
     && rm -rf /var/lib/apt/lists/*
-RUN pip install --upgrade setuptools wheel
+
+COPY requirements.txt .
+
+RUN pip install --upgrade pip setuptools wheel
 RUN pip install pyaes intervaltree --no-binary :all:
 RUN pip install undetected-chromedriver
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Указываем команду по умолчанию
-CMD ["python", "bot_3_2.py"]
+COPY . .
+
+CMD ["python", "main.py"]

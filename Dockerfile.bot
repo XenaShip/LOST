@@ -1,28 +1,33 @@
-# Базовый образ с Python
-FROM python:3.11-slim
+FROM python:3.10-slim
 
-# Устанавливаем рабочую директорию внутри контейнера
-WORKDIR /bot
+WORKDIR /app
 
-# Копируем все файлы в контейнер
-COPY . .
-
-# Устанавливаем зависимости
-RUN pip install --upgrade pip && \
-    apt-get update && \
-    apt-get install -y \
+# Установим системные зависимости (без Chromium)
+RUN apt-get update && apt-get install -y \
     wget \
     unzip \
-    chromium \
-    chromium-driver \
-    && rm -rf /var/lib/apt/lists/* && \
-    pip install --upgrade setuptools wheel && \
-    pip install pyaes intervaltree --no-binary :all: && \
-    pip install undetected-chromedriver && \
-    pip install --no-cache-dir -r requirements.txt
+    libglib2.0-0 \
+    libnss3 \
+    libgconf-2-4 \
+    libfontconfig1 \
+    libxss1 \
+    libappindicator1 \
+    libasound2 \
+    libxtst6 \
+    libxrandr2 \
+    libu2f-udev \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Указываем команду по умолчанию
-CMD ["sh", "-c", "python manage.py makemigrations main && \
-                  python manage.py migrate && \
-                  python bot.py || \
-                  (echo 'Failed, restarting...'; sleep 30; exit 1)"]
+COPY requirements.txt .
+
+# Установка Python-зависимостей
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install pyaes intervaltree --no-binary :all:
+RUN pip install undetected-chromedriver
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+CMD ["python", "main.py"]
