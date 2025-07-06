@@ -171,6 +171,31 @@ def process_text_with_gpt2(text):
     )
     return result.text
 
+async def get_username_by_id(user_id):
+    try:
+        # Преобразуем ID в целое число
+        user_id = int(user_id)
+        # Получаем информацию о пользователе
+        user = await client.get_entity(user_id)
+        if user.username:
+            return f"https://t.me/{user.username}"
+    except Exception as e:
+        logger.error(f"Ошибка получения username: {e}")
+    return None  # Если не удалось получить username
+
+
+async def process_contacts(text):
+    # Получаем контакт через GPT
+    raw_contact = await asyncio.to_thread(process_text_with_gpt2, text)
+    print('process')
+
+    # Если это tg:// ссылка - преобразуем
+    if raw_contact.startswith("tg://user?id="):
+        user_id = raw_contact.split("=")[1]
+        return await get_username_by_id(user_id) or raw_contact
+
+    return raw_contact
+
 async def download_image(image_url):
     """Скачивает изображение и сохраняет его локально."""
     response = requests.get(image_url, stream=True)
@@ -254,7 +279,7 @@ async def send_notification(user_id: int, ad_data: dict, message):
     Отправляет уведомление о новом объявлении пользователю
     """
     try:
-        contacts = await asyncio.to_thread(process_text_with_gpt2, message.text)
+        contacts = await process_contacts(message.text)
         message_text = message.new_text + " Контакты: " + contacts
         images = ad_data.get('images') or []  # Защита от None
 
@@ -392,7 +417,8 @@ async def new_message_handler(event):
                         images.append(file_path)
 
         # Обрабатываем текст с Yandex GPT
-        contacts = await asyncio.to_thread(process_text_with_gpt2, text)
+        contacts = await process_contacts(text)
+        print(contacts)
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
         print(help_text)
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
