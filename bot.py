@@ -2,9 +2,10 @@ import os
 import asyncio
 import random
 import logging
+import re
 import time
 from datetime import datetime
-
+from telegram import InputMediaVideo
 import telethon
 from aiogram import Bot
 import django
@@ -196,17 +197,78 @@ async def process_contacts(text):
 
     return raw_contact
 
-async def download_image(image_url):
-    """Скачивает изображение и сохраняет его локально."""
-    response = requests.get(image_url, stream=True)
-    if response.status_code == 200:
-        filename = os.path.join("temp_images", os.path.basename(image_url))
-        os.makedirs("temp_images", exist_ok=True)
-        with open(filename, "wb") as file:
-            for chunk in response.iter_content(1024):
-                file.write(chunk)
-        return filename
-    return None
+
+async def download_media(message):
+    """
+    Скачивает все медиа (фото и видео) из сообщения и альбомов (по grouped_id).
+    Возвращает список словарей {'type': 'photo'/'video', 'path': путь_к_файлу'}.
+    """
+    media_list = []
+    # Если сообщение – часть альбома, собираем все сообщения с этим grouped_id
+    if message.grouped_id:
+        album_msgs = await client.get_messages(
+            message.chat_id,
+            min_id=message.id - 20,
+            max_id=message.id + 20
+        )
+        # Фильтруем сообщения того же альбома
+        album_msgs = [m for m in album_msgs if m and m.grouped_id == message.grouped_id]
+    else:
+        album_msgs = [message]
+
+    # Проходим по каждому сообщению альбома
+    for msg in album_msgs:
+        # Скачиваем фото или видео
+        if msg.photo:
+            file_path = await client.download_media(msg.photo, DOWNLOAD_FOLDER)
+            if file_path:
+                media_list.append({'type': 'photo', 'path': file_path})
+        elif msg.video:
+            file_path = await client.download_media(msg.video, DOWNLOAD_FOLDER)
+            if file_path:
+                media_list.append({'type': 'video', 'path': file_path})
+    # Ограничиваем размер до 10 элементов
+    return media_list[:10]
+
+async def send_media_group(bot, chat_id, text, media_items):
+    """
+    Отправляет список медиа (фото и видео) в одном media_group.
+    Подпись (text) добавляется только к первому элементу.
+    """
+    if not media_items:
+        # Если медиа нет, отправляем просто текст
+        await bot.send_message(chat_id, text)
+        return
+
+    media_group = []
+    open_files = []
+    for idx, item in enumerate(media_items):
+        file_path = item['path']
+        if not os.path.exists(file_path):
+            continue
+        f = open(file_path, 'rb')
+        open_files.append(f)
+        # Первый элемент получает подпись
+        caption = text if idx == 0 else None
+        if item['type'] == 'photo':
+            media = InputMediaPhoto(media=f, caption=caption)
+        else:
+            media = InputMediaVideo(media=f, caption=caption)
+        media_group.append(media)
+
+    # Отправляем одним media_group. Требуется 2–10 элементов:contentReference[oaicite:3]{index=3}.
+    if len(media_group) == 1:
+        # Если только один элемент, отправляем его обычным методом
+        m = media_group[0]
+        if isinstance(m, InputMediaPhoto):
+            await bot.send_photo(chat_id, m.media, caption=text)
+        else:
+            await bot.send_video(chat_id, m.media, caption=text)
+    else:
+        await bot.send_media_group(chat_id=chat_id, media=media_group)
+    # Закрываем файлы
+    for f in open_files:
+        f.close()
 
 
 async def send_images_with_text(bot, chat_id, text, images):
@@ -273,54 +335,76 @@ async def check_subscriptions_and_notify(info_instance):
             await send_notification(subscription.user_id, ad_data, info_instance.message)
 
 
+def escape_markdown(text: str) -> str:
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+
 
 async def send_notification(user_id: int, ad_data: dict, message):
-    """
-    Отправляет уведомление о новом объявлении пользователю
-    """
     try:
         contacts = await process_contacts(message.text)
-        message_text = message.new_text + " Контакты: " + contacts
-        images = ad_data.get('images') or []  # Защита от None
+        raw_text = message.new_text + " Контакты: " + contacts
+        safe_text = escape_markdown(raw_text)
 
-        if images and isinstance(images, list):  # Явная проверка
+        # Ограничение длины подписи для media_group
+        MAX_CAPTION_LENGTH = 1024
+        if len(safe_text) > MAX_CAPTION_LENGTH:
+            safe_text = safe_text[:MAX_CAPTION_LENGTH - 3] + "..."
+
+        media_paths = ad_data.get('images') or []
+
+        if media_paths and isinstance(media_paths, list):
             media_group = []
+            open_files = []
 
-            # Первое изображение с подписью
-            first_img = images[0]
-            if first_img.startswith(("http://", "https://")):
-                # Если это URL
-                media_group.append(
-                    InputMediaPhoto(media=first_img, caption=message_text, parse_mode="Markdown")
-                )
-            else:
-                # Если это локальный путь
-                with open(first_img, "rb") as img_file:
-                    media_group.append(
-                        InputMediaPhoto(media=img_file, caption=message_text, parse_mode="Markdown")
-                    )
+            # Отдельная проверка caption длины
+            try:
+                Bot(token="dummy").check_caption_length(safe_text)
+            except Exception as e:
+                logger.error(f"Invalid Markdown: {e}")
+                # Удалим спец. символы при ошибке
+                safe_text = safe_text.replace('*', '').replace('_', '').replace('`', '')
 
-            # Остальные изображения
-            for img_url in images[1:10]:
-                if img_url.startswith(("http://", "https://")):
-                    media_group.append(InputMediaPhoto(media=img_url))
+            for idx, media_path in enumerate(media_paths[:10]):
+                if not os.path.exists(media_path):
+                    continue
+
+                f = open(media_path, "rb")
+                open_files.append(f)
+
+                is_video = media_path.lower().endswith(('.mp4', '.mov', '.avi'))
+                caption = safe_text if idx == 0 else None
+
+                if is_video:
+                    media = InputMediaVideo(media=f, caption=caption)
                 else:
-                    with open(img_url, "rb") as img_file:
-                        media_group.append(InputMediaPhoto(media=img_file))
+                    media = InputMediaPhoto(media=f, caption=caption)
 
-            await bot2.send_media_group(chat_id=user_id, media=media_group)
+                media_group.append(media)
+
+            if len(media_group) == 1:
+                m = media_group[0]
+                if isinstance(m, InputMediaPhoto):
+                    await bot2.send_photo(chat_id=user_id, photo=m.media, caption=safe_text)
+                else:
+                    await bot2.send_video(chat_id=user_id, video=m.media, caption=safe_text)
+            elif media_group:
+                await bot2.send_media_group(chat_id=user_id, media=media_group)
+
+            for f in open_files:
+                f.close()
+
         else:
-            await bot2.send_message(
-                chat_id=user_id,
-                text=message_text
-            )
+            # Если нет медиа — обычное сообщение
+            MAX_MESSAGE_LENGTH = 4096
+            text_msg = safe_text[:MAX_MESSAGE_LENGTH - 3] + "..." if len(safe_text) > MAX_MESSAGE_LENGTH else safe_text
+            await bot2.send_message(chat_id=user_id, text=text_msg)
 
     except RetryAfter as e:
         await asyncio.sleep(e.timeout)
         await send_notification(user_id, ad_data, message)
     except Exception as e:
-        print(f"Ошибка при отправке уведомления: {e}")
-
+        logger.error(f"Ошибка при отправке уведомления: {e}", exc_info=True)
 
 def is_ad_match_subscription(ad_data, subscription):
     """Синхронная функция проверки соответствия подписки"""
@@ -379,68 +463,45 @@ def is_ad_match_subscription(ad_data, subscription):
 
 # @client.on(events.NewMessage(chats=channel_entities))
 async def new_message_handler(event):
+    bot = Bot(token=BOT_TOKEN)
     logger.info(f"Новое сообщение из канала: {event.chat.username or event.chat.title}")
+
     if event.message:
         text = event.message.text or ""
-        images = []
-
-        # Скачиваем изображения, если есть
-        if event.message.media:
-            if hasattr(event.message.media, "photo"):
-                current_message = event.message
-
-                # Проверяем, есть ли у сообщения grouped_id (является ли оно частью альбома)
-                if current_message.grouped_id:
-                    # Получаем все сообщения с тем же grouped_id
-                    album_messages = await client.get_messages(
-                        event.message.chat_id,
-                        ids=range(current_message.id - 10, current_message.id + 10)  # Захватываем небольшой диапазон
-                    )
-
-                    # Фильтруем только те сообщения, которые имеют тот же grouped_id и не являются None
-                    album_messages = [
-                        msg for msg in album_messages
-                        if
-                        msg is not None and hasattr(msg, 'grouped_id') and msg.grouped_id == current_message.grouped_id
-                    ]
-
-                    # Извлекаем все фото из альбома
-                    photos = [msg.photo for msg in album_messages if msg.photo]
-                else:
-                    # Если это не альбом, просто берем фото из текущего сообщения
-                    photos = [current_message.photo] if current_message.photo else []
-
-                # 2️⃣ Скачиваем фото
-                for photo in photos:
-                    file_path = await client.download_media(photo, DOWNLOAD_FOLDER)
-                    if file_path:
-                        images.append(file_path)
+        media_items = await download_media(event.message)
 
         # Обрабатываем текст с Yandex GPT
         contacts = await process_contacts(text)
         print(contacts)
+
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
         print(help_text)
+
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
         print(new_text)
+
         new_text = new_text.replace("*", "")
         if not (help_text.strip().lower().startswith("да") or help_text.strip().lower().startswith("ответ: да")):
             new_text = 'нет'
+
         logger.info(f"Обработанный текст: {new_text}")
+
+        # Сохраняем сообщение в базу данных
         message = await sync_to_async(MESSAGE.objects.create)(
             text=text,
-            images=images if images else None,
+            images=[item['path'] for item in media_items] if media_items else None,
             new_text=new_text
         )
-        if not (new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
-            new_text = new_text + " Контакты: " + contacts
+
+        if not (new_text.lower() in ['нет', 'нет.']):
+            new_text += " Контакты: " + contacts
+
             address = process_text_with_gpt_adress(new_text)
             coords = get_coords_by_address(address)
 
             def parse_flat_area(value):
                 try:
                     if isinstance(value, str):
-                        # Удаляем все нецифровые символы и берем целую часть
                         value = ''.join(c for c in value if c.isdigit())
                         return int(value) if value else None
                     return int(value) if value is not None else None
@@ -448,25 +509,28 @@ async def new_message_handler(event):
                     return None
 
             flat_area = parse_flat_area(process_text_with_gpt_sq(new_text))
+
             info = await sync_to_async(INFO.objects.create)(
                 message=message,
                 price=process_text_with_gpt_price(new_text),
                 count_meters_flat=flat_area,
                 count_meters_metro=find_nearest_metro(*coords),
                 location=get_district_by_coords(*coords),
-                adress=process_text_with_gpt_adress(new_text),
+                adress=address,
                 rooms=process_text_with_gpt_rooms(new_text)
             )
+
+            # Уведомляем подписчиков
             asyncio.create_task(check_subscriptions_and_notify(info))
-            # Отправляем сообщение в Telegram
-        bot = Bot(token=BOT_TOKEN)
-        if new_text and not (new_text == 'Нет' or new_text == 'Нет.' or new_text == 'нет' or new_text == 'нет.'):
-            if images:
-                await send_images_with_text(bot, TELEGRAM_CHANNEL_ID, new_text, images)
+
+        # Отправляем результат в Telegram-канал
+        if new_text.lower() not in ['нет', 'нет.']:
+            if media_items:
+                await send_media_group(bot, TELEGRAM_CHANNEL_ID, new_text, media_items)
             else:
                 await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=new_text)
 
-        # Задержка перед следующим сообщением
+        # Задержка между сообщениями
         await asyncio.sleep(5)
 
 
