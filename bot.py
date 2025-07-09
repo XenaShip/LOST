@@ -344,7 +344,7 @@ async def send_notification(user_id: int, ad_data: dict, message):
     try:
         contacts = await process_contacts(message.text)
         raw_text = message.new_text + " Контакты: " + contacts
-        safe_text = escape_markdown(raw_text)
+        safe_text = raw_text
 
         # Ограничение длины подписи для media_group
         MAX_CAPTION_LENGTH = 1024
@@ -356,15 +356,6 @@ async def send_notification(user_id: int, ad_data: dict, message):
         if media_paths and isinstance(media_paths, list):
             media_group = []
             open_files = []
-
-            # Отдельная проверка caption длины
-            try:
-                Bot(token="dummy").check_caption_length(safe_text)
-            except Exception as e:
-                logger.error(f"Invalid Markdown: {e}")
-                # Удалим спец. символы при ошибке
-                safe_text = safe_text.replace('*', '').replace('_', '').replace('`', '')
-
             for idx, media_path in enumerate(media_paths[:10]):
                 if not os.path.exists(media_path):
                     continue
@@ -405,6 +396,8 @@ async def send_notification(user_id: int, ad_data: dict, message):
         await send_notification(user_id, ad_data, message)
     except Exception as e:
         logger.error(f"Ошибка при отправке уведомления: {e}", exc_info=True)
+
+
 
 def is_ad_match_subscription(ad_data, subscription):
     """Синхронная функция проверки соответствия подписки"""
