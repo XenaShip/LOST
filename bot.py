@@ -20,6 +20,8 @@ from asgiref.sync import sync_to_async
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from yandex_cloud_ml_sdk import YCloudML
+import sys
+import os
 
 from bot_cian import message_handler
 from district import get_district_by_coords, get_coords_by_address
@@ -47,7 +49,7 @@ TELEGRAM_PASSWORD = os.getenv('TELEGRAM_PASSWORD')
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-SESSION_NAME = "session_name2"
+SESSION_NAME = "session_name_lost"
 
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 YANDEX_GPT_API_KEY = os.getenv("YANDEX_GPT_API_KEY")
@@ -69,7 +71,20 @@ def process_text_with_gpt(text):
     messages_1 = [
         {
             "role": "system",
-            "text": "Переформулируй объявление под шаблон, отделив каждый пункт несколькими пустыми строчками: кол-во комнат, цена, адрес, условия, описание. Если заданный текст- не объявление, ответь словом нет. Если это человек или семья ищет квартиру, а не объявление о сдачи, так же ответь нет. Контакты не указывай, никакие ссылки тоже. Добавь эмодзи в каждый пункт, если это объявление. Ответь одним словом. не пиши ответ да или нет",
+            "text": """
+                Вы — помощник, который превращает объявление об аренде квартиры или комнаты в структурированный шаблон.
+                Если текст **не** является объявлением об аренде, просто верните слово `нет`.
+                
+                Если это объявление об аренде, выведите **точно** в таком формате (каждая строка — новый пункт):
+                
+                🏠 **Комнаты:** <количество комнат или описание комнат>  
+                💰 **Цена:** <цена + условия оплаты>  
+                📍 **Адрес:** <улица, метро или район>  
+                ⚙️ **Условия:** <дата заселения, прочие условия>  
+                📝 **Описание:** <дополнительное описание, рядом инфраструктура, ограничения>
+                
+                Ничего больше не добавляйте: ни «Контакты:», ни лишних эмодзи, ни ссылок.
+                """,
         },
         {
             "role": "user",
@@ -94,7 +109,21 @@ def process_text_with_gpt3(text):
     messages_1 = [
         {
             "role": "system",
-            "text": "Посмотри текст. Если в текст - объявление о продаже (НЕ об аренде и используются слова 'федеральный застройщик', 'акция', 'ипотека') квартиры или квартир ответь словом нет. Если это объявление об аренде квартиры ответь да. Ответь одним словом",
+            "text": """
+                Вы — надёжный классификатор объявлений об аренде квартир и комнат в Москве.
+                Вашей задачей является однозначно определить: является ли этот текст **объявлением об аренде** (сдаётся квартира или комната физическим лицом, без рекламы агентств и без продажи). 
+                
+                Критерии «аренда»:
+                - В тексте присутствуют слова «сдаётся», «сдаются», «сдаю», «аренда», «арендую».
+                - Указана цена или диапазон цен.
+                - Есть контакт (телефон или упоминание Telegram‑ссылки).
+                - Нет слов «продаётся», «продаю», «в продажу», «продажа», «ищу квартиру», «резюме».
+                
+                **Инструкция**:  
+                – Если текст **является** объявлением об аренде — ответьте ровно `Да`.  
+                – Если текст **не является** объявлением об аренде — ответьте ровно `Нет`.  
+                – Ничего больше не выводите, только одно слово (с заглавной буквы).
+                """,
         },
         {
             "role": "user",
@@ -340,6 +369,16 @@ def escape_markdown(text: str) -> str:
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 
+def acquire_lock():
+    lock_file = open("bot.lock", "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        print("Another instance is already running. Exiting.")
+        sys.exit(1)
+    return lock_file
+
+
 async def send_notification(user_id: int, ad_data: dict, message):
     try:
         contacts = await process_contacts(message.text)
@@ -527,34 +566,60 @@ async def new_message_handler(event):
         await asyncio.sleep(5)
 
 
-async def main():
-    await client.connect()
-    if not await client.is_user_authorized():
-        await client.send_code_request(PHONE_NUMBER)
-        code = input('Введите код из Telegram: ')
+def check_running():
+    pid_file = "bot.pid"
+    if os.path.exists(pid_file):
+        with open(pid_file, "r") as f:
+            old_pid = f.read()
+        if os.path.exists(f"/proc/{old_pid}"):  # Для Linux
+            print("Already running!")
+            sys.exit(1)
+        # Для Windows (альтернатива):
         try:
-            await client.sign_in(PHONE_NUMBER, code)
-        except telethon.errors.SessionPasswordNeededError:
-            password = os.getenv('TELEGRAM_PASSWORD')
-            await client.sign_in(password=password)
+            os.kill(int(old_pid), 0)  # Проверяем, жив ли процесс
+            sys.exit(1)
+        except (ProcessLookupError, ValueError):
+            pass  # Процесс умер, можно продолжать
 
-    # ✅ Получаем сущности каналов по username
-    CHANNEL_USERNAMES = [
-        "arendamsc",
-        "onmojetprogat",
-        "loltestneedxenaship",
-        "arendamsk_mo",
-        "lvngrm_msk",
-        "Sdat_Kvartiru0",
-        "bestflats_msk",
-        "nebabushkin_msk",
-    ]
+    with open(pid_file, "w") as f:
+        f.write(str(os.getpid()))
 
+
+async def main():
+    check_running()
     try:
-        channel_entities = await asyncio.gather(*[client.get_entity(username) for username in CHANNEL_USERNAMES])
-    except Exception as e:
-        logger.error(f"Ошибка при получении каналов: {e}")
-        return
+        await client.connect()
+        if not await client.is_user_authorized():
+            await client.send_code_request(PHONE_NUMBER)
+            code = input('Введите код из Telegram: ')
+            try:
+                await client.sign_in(PHONE_NUMBER, code)
+            except telethon.errors.SessionPasswordNeededError:
+                password = os.getenv('TELEGRAM_PASSWORD')
+                await client.sign_in(password=password)
+
+        # ✅ Получаем сущности каналов по username
+        CHANNEL_USERNAMES = [
+            "arendamsc",
+            "onmojetprogat",
+            "loltestneedxenaship",
+            "arendamsk_mo",
+            "lvngrm_msk",
+            "Sdat_Kvartiru0",
+            "bestflats_msk",
+            "nebabushkin_msk",
+        ]
+
+        try:
+            channel_entities = await asyncio.gather(*[client.get_entity(username) for username in CHANNEL_USERNAMES])
+        except Exception as e:
+            logger.error(f"Ошибка при получении каналов: {e}")
+            return
+    finally:
+        if os.path.exists("bot.pid"):
+            os.unlink("bot.pid")
+
+
 
     # ✅ Регистрируем обработчик событий вручную
     @client.on(events.NewMessage(chats=channel_entities))
