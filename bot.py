@@ -189,7 +189,8 @@ def process_text_with_gpt2(text):
             "3. 'Телефон: +79161234567' → оставить без изменений\n"
             "4. 'Контакты: [Менеджер](https://t.me/manager)' → https://t.me/manager\n\n"
             "5. 'Циан, контакты (https://www.cian.ru/rent/flat/319392264) уровень доверия низкий ⚠️ (http://t.me/lvngrm_msk/26)выложить квартиру бесплатно (http://t.me/lvngrm_bot?start=PM)' → https://www.cian.ru/rent/flat/319392264\n\n"
-            "Важно: возвращай только ОДНУ саму ссылку, без дополнительного текста и форматирования!"
+            "Важно: возвращай только ОДНУ саму ссылку, без дополнительного текста и форматирования! Если контактов нет - ответь 'нет'"
+                    "пример: 'нет'"
         },
         {
             "role": "user",
@@ -515,7 +516,8 @@ async def new_message_handler(event):
         new_text = new_text.replace("*", "")
         if not (help_text.strip().lower().startswith("да") or help_text.strip().lower().startswith("ответ: да")):
             new_text = 'нет'
-
+        if contacts.strip().lower().startswith("нет") or contacts.strip().lower().startswith("ответ: нет"):
+            new_text = 'нет'
         logger.info(f"Обработанный текст: {new_text}")
 
         # Сохраняем сообщение в базу данных
