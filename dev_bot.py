@@ -36,22 +36,22 @@ load_dotenv()
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
-from main.models import MESSAGE, INFO, Subscription  # Используем новую модель
+from main.models import DEVCLIENT_INFO, DEVINFO, DEVSubscription, DEVMESSAGE  # Используем новую модель
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-bot2 = Bot(token=os.getenv("TOKEN3"))
+bot2 = Bot(token=os.getenv("DEV_BOT_TOKEN_SUB"))
 # Конфигурация
 PHONE_NUMBER = os.getenv('PHONE_NUMBER')
 TELEGRAM_PASSWORD = os.getenv('TELEGRAM_PASSWORD')
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.getenv("DEV_BOT_TOKEN")
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-SESSION_NAME = "session_name_lost"
+SESSION_NAME = "session_name_lost_dev"
 
-TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID_DEV")
 YANDEX_GPT_API_KEY = os.getenv("YANDEX_GPT_API_KEY")
 DOWNLOAD_FOLDER = "downloads/"
 
@@ -77,12 +77,12 @@ def process_text_with_gpt(text):
 
                 Если текст не является объявлением об аренде, просто верните слово нет.
 
-                Если это объявление об аренде, выведите точно в таком формате (каждая строка - новый пункт):
+                Если это объявление об аренде, выведите точно в таком формате (каждая строка— новый пункт):
 
-                🏠 Комнаты: <количество комнат или описание комнат>*
-                💰 Цена: <цена + условия оплаты>*
-                📍 Адрес: <улица, метро или район>*
-                ⚙️ Условия: <дата заселения, прочие условия>*
+                🏠 Комнаты: <количество комнат или описание комнат*>
+                💰 Цена: <цена + условия оплаты*>
+                📍 Адрес: <улица, метро или район*>
+                ⚙️ Условия: <дата заселения, прочие условия*>
                 📝 Описание: <дополнительное описание, рядом инфраструктура, ограничения>
 
                 Ничего больше не добавляйте: ни «Контакты:», ни лишних эмодзи, ни ссылок. '*' - обязательный символ в шаблоне
@@ -350,7 +350,7 @@ async def download_images(message):
 
 async def check_subscriptions_and_notify(info_instance):
     # Получаем все активные подписки
-    subscriptions = await sync_to_async(list)(Subscription.objects.filter(is_active=True))
+    subscriptions = await sync_to_async(list)(DEVSubscription.objects.filter(is_active=True))
 
     # Получаем данные объявления
     ad_data = {
@@ -374,20 +374,10 @@ def escape_markdown(text: str) -> str:
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 
-def acquire_lock():
-    lock_file = open("bot.lock", "w")
-    try:
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except IOError:
-        print("Another instance is already running. Exiting.")
-        sys.exit(1)
-    return lock_file
-
-
 async def send_notification(user_id: int, ad_data: dict, message):
     try:
         contacts = await process_contacts(message.text)
-        raw_text = message.new_text + " Контакты: " + contacts
+        raw_text = message.new_text + "\nКонтакты: " + contacts
         safe_text = raw_text
 
         # Ограничение длины подписи для media_group
@@ -505,11 +495,9 @@ async def new_message_handler(event):
     if event.message:
         text = event.message.text or ""
         media_items = await download_media(event.message)
-
         # Обрабатываем текст с Yandex GPT
         contacts = await process_contacts(text)
         print(contacts)
-
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
         print(help_text)
 
@@ -524,7 +512,7 @@ async def new_message_handler(event):
         logger.info(f"Обработанный текст: {new_text}")
 
         # Сохраняем сообщение в базу данных
-        message = await sync_to_async(MESSAGE.objects.create)(
+        message = await sync_to_async(DEVMESSAGE.objects.create)(
             text=text,
             images=[item['path'] for item in media_items] if media_items else None,
             new_text=new_text
@@ -547,7 +535,7 @@ async def new_message_handler(event):
 
             flat_area = parse_flat_area(process_text_with_gpt_sq(new_text))
 
-            info = await sync_to_async(INFO.objects.create)(
+            info = await sync_to_async(DEVINFO.objects.create)(
                 message=message,
                 price=process_text_with_gpt_price(new_text),
                 count_meters_flat=flat_area,
@@ -605,15 +593,7 @@ async def main():
 
         # ✅ Получаем сущности каналов по username
         CHANNEL_USERNAMES = [
-            "arendamsc",
-            "onmojetprogat",
-            "loltestneedxenaship",
-            "arendamsk_mo",
-            "lvngrm_msk",
-            "Sdat_Kvartiru0",
-            "bestflats_msk",
-            "nebabushkin_msk",
-            "keystomoscow",
+            "devarendatoriybotpytest",
         ]
 
         try:
