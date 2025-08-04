@@ -97,7 +97,7 @@ def get_confirm_keyboard():
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton("▶️ Старт")],
-        [KeyboardButton("📬 Подписка")],
+        [KeyboardButton("📬 Подписаться")],
         [KeyboardButton("ℹ️ Моя подписка")],
         [KeyboardButton("❌ Отписка")]
     ]
@@ -334,7 +334,7 @@ def main() -> None:
     application = Application.builder().token(os.getenv("TOKEN3")).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📬 Подписка$"), subscribe)],
+        entry_points=[MessageHandler(filters.Regex("^📬 Подписаться$"), subscribe)],
         states={
             PRICE: [CallbackQueryHandler(process_price, pattern="^price_")],
             ROOMS: [CallbackQueryHandler(process_rooms, pattern="^rooms_")],
@@ -352,7 +352,7 @@ def main() -> None:
 
     application.add_handler(conv_handler)
     application.add_handler(MessageHandler(filters.Regex("^▶️ Старт$"), start))
-    application.add_handler(MessageHandler(filters.Regex("^📬 Подписка$"), subscribe))
+    application.add_handler(MessageHandler(filters.Regex("^📬 Подписаться$"), subscribe))
     application.add_handler(MessageHandler(filters.Regex("^ℹ️ Моя подписка$"), my_subscription))
     application.add_handler(MessageHandler(filters.Regex("^❌ Отписка$"), unsubscribe))
     application.add_handler(CommandHandler("start", start))
