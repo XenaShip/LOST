@@ -98,12 +98,13 @@ def get_confirm_keyboard():
 # Добавим функцию для получения основной клавиатуры
 def get_main_keyboard():
     keyboard = [
-        [KeyboardButton("/start")],
-        [KeyboardButton("/subscribe")],
-        [KeyboardButton("/my_subscription")],
-        [KeyboardButton("/unsubscribe")]
+        [KeyboardButton("▶️ Старт")],
+        [KeyboardButton("📬 Подписка")],
+        [KeyboardButton("ℹ️ Моя подписка")],
+        [KeyboardButton("❌ Отписка")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 
 
 # Асинхронные операции с БД
@@ -362,8 +363,9 @@ async def unsubscribe(update: Update, context: CallbackContext) -> None:
 def main() -> None:
     application = Application.builder().token(os.getenv("DEV_BOT_TOKEN_SUB")).build()
 
+    # Основной ConversationHandler
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('subscribe', subscribe)],
+        entry_points=[MessageHandler(filters.Regex("^📬 Подписка$"), subscribe)],  # Русская кнопка
         states={
             PRICE: [CallbackQueryHandler(process_price)],
             ROOMS: [CallbackQueryHandler(process_rooms)],
@@ -374,17 +376,27 @@ def main() -> None:
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
-            CommandHandler('start', cancel),  # Добавляем обработку /start как fallback
-            MessageHandler(filters.COMMAND, cancel),  # Добавляем обработку любых команд как fallback
+            MessageHandler(filters.Regex("^▶️ Старт$"), cancel),  # Старт прерывает подписку
+            MessageHandler(filters.COMMAND, cancel),  # Любая команда прерывает
         ],
     )
 
+    # Подключаем ConversationHandler
     application.add_handler(conv_handler)
+
+    # Обработчики русских кнопок
+    application.add_handler(MessageHandler(filters.Regex("^▶️ Старт$"), start))
+    application.add_handler(MessageHandler(filters.Regex("^📬 Подписка$"), subscribe))
+    application.add_handler(MessageHandler(filters.Regex("^ℹ️ Моя подписка$"), my_subscription))
+    application.add_handler(MessageHandler(filters.Regex("^❌ Отписка$"), unsubscribe))
+
+    # Оставляем поддержку команд (если кто-то введёт вручную)
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Regex("start"), start))
+    application.add_handler(CommandHandler("subscribe", subscribe))
     application.add_handler(CommandHandler("my_subscription", my_subscription))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe))
 
+    # Запуск бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
