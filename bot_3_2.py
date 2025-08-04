@@ -18,7 +18,7 @@ import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 
-from main.models import DEVSubscription
+from main.models import DEVSubscription, Subscription
 
 # Настройка логирования
 logging.basicConfig(
@@ -271,7 +271,7 @@ async def process_metro(update: Update, context: CallbackContext) -> int:
 
     # Формируем сводку
     data = context.user_data
-    district_name = dict(DEVSubscription.DISTRICT_CHOICES).get(data.get('district'), 'Не важно')
+    district_name = dict(Subscription.DISTRICT_CHOICES).get(data.get('district'), 'Не важно')
 
     summary = (
         "✅ Проверьте параметры подписки:\n\n"
