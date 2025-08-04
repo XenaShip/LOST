@@ -605,6 +605,7 @@ async def main():
 
         # ✅ Получаем сущности каналов по username
         CHANNEL_USERNAMES = [
+            "keystomoscow"
             "arendamsc",
             "onmojetprogat",
             "loltestneedxenaship",
