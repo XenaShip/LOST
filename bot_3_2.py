@@ -1,7 +1,6 @@
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton, \
-    ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -20,7 +19,6 @@ django.setup()
 
 from main.models import Subscription
 
-
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -32,7 +30,7 @@ logger = logging.getLogger(__name__)
 PRICE, ROOMS, FLAT_AREA, DISTRICT, METRO_DISTANCE, CONFIRM = range(6)
 
 
-# Клавиатуры для разных состояний
+# --- Клавиатуры ---
 def get_price_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("До 35000₽", callback_data="price_0_35000")],
@@ -96,7 +94,6 @@ def get_confirm_keyboard():
     ])
 
 
-# Добавим функцию для получения основной клавиатуры
 def get_main_keyboard():
     keyboard = [
         [KeyboardButton("▶️ Старт")],
@@ -107,8 +104,7 @@ def get_main_keyboard():
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
-
-# Асинхронные операции с БД
+# --- Работа с БД ---
 @sync_to_async
 def get_subscription(user_id):
     try:
@@ -147,7 +143,7 @@ def deactivate_subscription(user_id):
         return False
 
 
-# Команды бота
+# --- Команды бота ---
 async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         "🏡 Бот подписки на объявления о недвижимости\n\n"
@@ -161,10 +157,9 @@ async def start(update: Update, context: CallbackContext) -> None:
 
 async def subscribe(update: Update, context: CallbackContext) -> int:
     context.user_data.clear()
-    # Отправляем сообщение с инлайн клавиатурой для выбора цены, сохраняя основную клавиатуру
     await update.message.reply_text(
         "💰 Выберите диапазон цен:",
-        reply_markup=get_price_keyboard()
+        reply_markup=get_price_keyboard()  # Только inline-кнопки
     )
     return PRICE
 
@@ -172,10 +167,6 @@ async def subscribe(update: Update, context: CallbackContext) -> int:
 async def process_price(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
-
-    if not query:  # Если callback_query отсутствует, значит диалог был прерван
-        context.user_data.clear()
-        return ConversationHandler.END
 
     data = query.data.split('_')
     if data[1] == 'any':
@@ -196,10 +187,6 @@ async def process_rooms(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
 
-    if not query:  # Если callback_query отсутствует, значит диалог был прерван
-        context.user_data.clear()
-        return ConversationHandler.END
-
     data = query.data.split('_')
     if data[1] == 'any':
         context.user_data['min_rooms'] = None
@@ -218,10 +205,6 @@ async def process_rooms(update: Update, context: CallbackContext) -> int:
 async def process_area(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
-
-    if not query:  # Если callback_query отсутствует, значит диалог был прерван
-        context.user_data.clear()
-        return ConversationHandler.END
 
     data = query.data.split('_')
     if data[1] == 'any':
@@ -242,10 +225,6 @@ async def process_district(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
 
-    if not query:  # Если callback_query отсутствует, значит диалог был прерван
-        context.user_data.clear()
-        return ConversationHandler.END
-
     data = query.data.split('_')
     context.user_data['district'] = data[1]
 
@@ -260,27 +239,23 @@ async def process_metro(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
 
-    if not query:  # Если callback_query отсутствует, значит диалог был прерван
-        context.user_data.clear()
-        return ConversationHandler.END
-
     data = query.data.split('_')
     if data[1] == 'any':
         context.user_data['max_metro_distance'] = None
     else:
         context.user_data['max_metro_distance'] = int(data[1])
 
-    # Формируем сводку
-    data = context.user_data
-    district_name = dict(Subscription.DISTRICT_CHOICES).get(data.get('district'), 'Не важно')
+    district_name = dict(Subscription.DISTRICT_CHOICES).get(
+        context.user_data.get('district'), 'Не важно'
+    )
 
     summary = (
         "✅ Проверьте параметры подписки:\n\n"
-        f"• Цена: {data.get('min_price', 'не важно')} - {data.get('max_price', 'не важно')} руб\n"
-        f"• Комнат: {data.get('min_rooms', 'не важно')}-{data.get('max_rooms', 'не важно')}\n"
-        f"• Площадь: {data.get('min_flat', 'не важно')}-{data.get('max_flat', 'не важно')} м²\n"
+        f"• Цена: {context.user_data.get('min_price', 'не важно')} - {context.user_data.get('max_price', 'не важно')} руб\n"
+        f"• Комнат: {context.user_data.get('min_rooms', 'не важно')}-{context.user_data.get('max_rooms', 'не важно')}\n"
+        f"• Площадь: {context.user_data.get('min_flat', 'не важно')}-{context.user_data.get('max_flat', 'не важно')} м²\n"
         f"• Округ: {district_name}\n"
-        f"• До метро: ≤{data.get('max_metro_distance', 'не важно')} м\n\n"
+        f"• До метро: ≤{context.user_data.get('max_metro_distance', 'не важно')} м\n\n"
         "Подтвердите ваш выбор:"
     )
 
@@ -295,10 +270,6 @@ async def process_confirmation(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
 
-    if not query:  # Если callback_query отсутствует, значит диалог был прерван
-        context.user_data.clear()
-        return ConversationHandler.END
-
     if query.data == 'confirm_yes':
         user = update.effective_user
         await update_or_create_subscription(
@@ -307,30 +278,28 @@ async def process_confirmation(update: Update, context: CallbackContext) -> int:
             params=context.user_data
         )
         await query.edit_message_text("🎉 Подписка успешно сохранена!")
-        # Отправляем новое сообщение с основной клавиатурой
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="Вы можете продолжить работу с ботом:",
             reply_markup=get_main_keyboard()
         )
     else:
-        await query.edit_message_text("Настройка подписки отменена. Нажмите /subscribe, чтобы начать заново.")
-        # Отправляем новое сообщение с основной клавиатурой
+        await query.edit_message_text("Настройка подписки отменена.")
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="Вы можете продолжить работу с ботом:",
             reply_markup=get_main_keyboard()
         )
 
-    context.user_data.clear()  # Очищаем данные пользователя в конце диалога
+    context.user_data.clear()
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: CallbackContext) -> int:
-    context.user_data.clear()  # Очищаем данные пользователя
+    context.user_data.clear()
     await update.message.reply_text(
-        "Настройка подписки отменена. Нажмите /subscribe, чтобы начать заново.",
-        reply_markup=get_main_keyboard()  # Возвращаем основную клавиатуру
+        "Настройка подписки отменена. Нажмите «Подписка», чтобы начать заново.",
+        reply_markup=get_main_keyboard()
     )
     return ConversationHandler.END
 
@@ -346,10 +315,10 @@ async def my_subscription(update: Update, context: CallbackContext) -> None:
             f"• Площадь: {sub.min_flat or 'не важно'}-{sub.max_flat or 'не важно'} м²\n"
             f"• Округ: {district_name}\n"
             f"• До метро: ≤{sub.max_metro_distance or 'не важно'} м\n\n"
-            "Для изменения параметров нажмите /subscribe"
+            "Для изменения параметров нажмите «Подписка»"
         )
     else:
-        text = "У вас нет активной подписки. Для создания нажмите /subscribe"
+        text = "У вас нет активной подписки. Для создания нажмите «Подписка»"
 
     await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
@@ -364,40 +333,33 @@ async def unsubscribe(update: Update, context: CallbackContext) -> None:
 def main() -> None:
     application = Application.builder().token(os.getenv("TOKEN3")).build()
 
-    # Основной ConversationHandler
     conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📬 Подписка$"), subscribe)],  # Русская кнопка
+        entry_points=[MessageHandler(filters.Regex("^📬 Подписка$"), subscribe)],
         states={
-            PRICE: [CallbackQueryHandler(process_price)],
-            ROOMS: [CallbackQueryHandler(process_rooms)],
-            FLAT_AREA: [CallbackQueryHandler(process_area)],
-            DISTRICT: [CallbackQueryHandler(process_district)],
-            METRO_DISTANCE: [CallbackQueryHandler(process_metro)],
-            CONFIRM: [CallbackQueryHandler(process_confirmation)],
+            PRICE: [CallbackQueryHandler(process_price, pattern="^price_")],
+            ROOMS: [CallbackQueryHandler(process_rooms, pattern="^rooms_")],
+            FLAT_AREA: [CallbackQueryHandler(process_area, pattern="^area_")],
+            DISTRICT: [CallbackQueryHandler(process_district, pattern="^district_")],
+            METRO_DISTANCE: [CallbackQueryHandler(process_metro, pattern="^metro_")],
+            CONFIRM: [CallbackQueryHandler(process_confirmation, pattern="^confirm_")],
         },
         fallbacks=[
             CommandHandler('cancel', cancel),
-            MessageHandler(filters.Regex("^▶️ Старт$"), cancel),  # Старт прерывает подписку
-            MessageHandler(filters.COMMAND, cancel),  # Любая команда прерывает
+            MessageHandler(filters.Regex("^▶️ Старт$"), cancel),
+            MessageHandler(filters.COMMAND, cancel),
         ],
     )
 
-    # Подключаем ConversationHandler
     application.add_handler(conv_handler)
-
-    # Обработчики русских кнопок
     application.add_handler(MessageHandler(filters.Regex("^▶️ Старт$"), start))
     application.add_handler(MessageHandler(filters.Regex("^📬 Подписка$"), subscribe))
     application.add_handler(MessageHandler(filters.Regex("^ℹ️ Моя подписка$"), my_subscription))
     application.add_handler(MessageHandler(filters.Regex("^❌ Отписка$"), unsubscribe))
-
-    # Оставляем поддержку команд (если кто-то введёт вручную)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("subscribe", subscribe))
     application.add_handler(CommandHandler("my_subscription", my_subscription))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe))
 
-    # Запуск бота
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
