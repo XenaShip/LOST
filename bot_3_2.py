@@ -338,7 +338,7 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 async def my_subscription(update: Update, context: CallbackContext) -> None:
     sub = await get_subscription(update.effective_user.id)
     if sub:
-        district_name = dict(DEVSubscription.DISTRICT_CHOICES).get(sub.district, 'Не важно')
+        district_name = dict(Subscription.DISTRICT_CHOICES).get(sub.district, 'Не важно')
         text = (
             "📋 Ваша текущая подписка:\n\n"
             f"• Цена: {sub.min_price or 'не важно'} - {sub.max_price or 'не важно'} руб\n"
