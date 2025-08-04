@@ -18,7 +18,8 @@ import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 
-from main.models import DEVSubscription, Subscription
+from main.models import Subscription
+
 
 # Настройка логирования
 logging.basicConfig(
@@ -111,14 +112,14 @@ def get_main_keyboard():
 @sync_to_async
 def get_subscription(user_id):
     try:
-        return DEVSubscription.objects.get(user_id=user_id)
-    except DEVSubscription.DoesNotExist:
+        return Subscription.objects.get(user_id=user_id)
+    except Subscription.DoesNotExist:
         return None
 
 
 @sync_to_async
 def update_or_create_subscription(user_id, username, params):
-    return DEVSubscription.objects.update_or_create(
+    return Subscription.objects.update_or_create(
         user_id=user_id,
         defaults={
             'username': username,
@@ -138,11 +139,11 @@ def update_or_create_subscription(user_id, username, params):
 @sync_to_async
 def deactivate_subscription(user_id):
     try:
-        sub = DEVSubscription.objects.get(user_id=user_id)
+        sub = Subscription.objects.get(user_id=user_id)
         sub.is_active = False
         sub.save()
         return True
-    except DEVSubscription.DoesNotExist:
+    except Subscription.DoesNotExist:
         return False
 
 
