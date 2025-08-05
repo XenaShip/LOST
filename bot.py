@@ -77,12 +77,12 @@ def process_text_with_gpt(text):
 
                 Если текст не является объявлением об аренде, просто верните слово нет.
 
-                Если это объявление об аренде, выведите точно в таком формате (каждая строка - новый пункт):
+                Если это объявление об аренде, выведите точно в таком формате (каждая строка— новый пункт):
 
-                🏠 Комнаты: <количество комнат или описание комнат>*
-                💰 Цена: <цена + условия оплаты>*
-                📍 Адрес: <улица, метро или район>*
-                ⚙️ Условия: <дата заселения, прочие условия>*
+                🏠 Комнаты: <количество комнат или описание комнат*>
+                💰 Цена: <цена + условия оплаты*>
+                📍 Адрес: <улица, метро или район*>
+                ⚙️ Условия: <дата заселения, прочие условия*>
                 📝 Описание: <дополнительное описание, рядом инфраструктура, ограничения>
 
                 Ничего больше не добавляйте: ни «Контакты:», ни лишних эмодзи, ни ссылок. '*' - обязательный символ в шаблоне
@@ -373,129 +373,107 @@ def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
-
-def acquire_lock():
-    lock_file = open("bot.lock", "w")
+def safe_parse_number(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.replace(',', '.').strip()
+        # оставляем только цифры и точку
+        value = ''.join(c for c in value if c.isdigit() or c == '.')
     try:
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except IOError:
-        print("Another instance is already running. Exiting.")
-        sys.exit(1)
-    return lock_file
+        return float(value)
+    except:
+        return None
 
 
 async def send_notification(user_id: int, ad_data: dict, message):
+    """
+    Отправка уведомления пользователю с поддержкой URL изображений (aiogram v3)
+    """
     try:
-        contacts = await process_contacts(message.text)
-        raw_text = message.new_text + " Контакты: " + contacts
-        safe_text = raw_text
+        safe_text = message.new_text
 
-        # Ограничение длины подписи для media_group
-        MAX_CAPTION_LENGTH = 1024
-        if len(safe_text) > MAX_CAPTION_LENGTH:
-            safe_text = safe_text[:MAX_CAPTION_LENGTH - 3] + "..."
+        # Добавляем контакты, если их нет
+        if "Контакты" not in safe_text:
+            contacts = await asyncio.to_thread(process_text_with_gpt2, message.text)
+            if contacts and contacts.lower() not in ['нет', 'нет.']:
+                safe_text += " Контакты: " + contacts
 
         media_paths = ad_data.get('images') or []
+        media_group = []
 
-        if media_paths and isinstance(media_paths, list):
-            media_group = []
-            open_files = []
-            for idx, media_path in enumerate(media_paths[:10]):
-                if not os.path.exists(media_path):
-                    continue
+        for idx, media_path in enumerate(media_paths[:10]):
+            caption = safe_text if idx == 0 else None
 
-                f = open(media_path, "rb")
-                open_files.append(f)
+            # Aiogram v3 требует именованные аргументы
+            if str(media_path).startswith("http"):
+                media_group.append(InputMediaPhoto(media=media_path, caption=caption))
+            elif os.path.exists(media_path):
+                # локальный файл открывать не нужно, aiogram сам откроет по пути
+                media_group.append(InputMediaPhoto(media=open(media_path, "rb"), caption=caption))
 
-                is_video = media_path.lower().endswith(('.mp4', '.mov', '.avi'))
-                caption = safe_text if idx == 0 else None
-
-                if is_video:
-                    media = InputMediaVideo(media=f, caption=caption)
-                else:
-                    media = InputMediaPhoto(media=f, caption=caption)
-
-                media_group.append(media)
-
+        if media_group:
             if len(media_group) == 1:
-                m = media_group[0]
-                if isinstance(m, InputMediaPhoto):
-                    await bot2.send_photo(chat_id=user_id, photo=m.media, caption=safe_text)
-                else:
-                    await bot2.send_video(chat_id=user_id, video=m.media, caption=safe_text)
-            elif media_group:
+                await bot2.send_photo(chat_id=user_id, photo=media_group[0].media, caption=safe_text)
+            else:
                 await bot2.send_media_group(chat_id=user_id, media=media_group)
-
-            for f in open_files:
-                f.close()
-
         else:
-            # Если нет медиа — обычное сообщение
-            MAX_MESSAGE_LENGTH = 4096
-            text_msg = safe_text[:MAX_MESSAGE_LENGTH - 3] + "..." if len(safe_text) > MAX_MESSAGE_LENGTH else safe_text
-            await bot2.send_message(chat_id=user_id, text=text_msg)
+            await bot2.send_message(chat_id=user_id, text=safe_text)
+
+        logger.info(f"[NOTIFY] Отправлено объявление пользователю {user_id}")
 
     except RetryAfter as e:
+        logger.warning(f"[NOTIFY] Flood control, повтор через {e.timeout} сек.")
         await asyncio.sleep(e.timeout)
         await send_notification(user_id, ad_data, message)
     except Exception as e:
-        logger.error(f"Ошибка при отправке уведомления: {e}", exc_info=True)
+        logger.error(f"[NOTIFY] Ошибка при отправке уведомления пользователю {user_id}: {e}", exc_info=True)
 
 
 def is_ad_match_subscription(ad_data, subscription):
-    """Синхронная функция проверки соответствия подписки"""
+    """
+    Проверяет, подходит ли объявление под параметры подписки.
+    Учитывает:
+      - 0 комнат = студия (отсекается, если подписка >=1 комнаты)
+      - 0 м² = нераспознанная площадь (не используется для фильтрации)
+    """
     try:
-        # Функция для преобразования строки с запятой в число
-        def parse_number(value):
-            if value is None:
-                return None
-            if isinstance(value, str):
-                # Заменяем запятую на точку и удаляем пробелы
-                value = value.replace(',', '.').strip()
-            try:
-                return float(value)
-            except (ValueError, TypeError):
-                return None
+        ad_price = safe_parse_number(ad_data.get('price'))
+        ad_rooms = safe_parse_number(ad_data.get('rooms'))
+        ad_flat_area = safe_parse_number(ad_data.get('count_meters_flat'))
+        ad_metro_distance = safe_parse_number(ad_data.get('count_meters_metro'))
 
-        # Преобразуем значения в числа (если они не None)
-        ad_price = parse_number(ad_data['price'])
-        ad_rooms = parse_number(ad_data['rooms'])
-        ad_flat_area = parse_number(ad_data.get('count_meters_flat'))
-        ad_metro_distance = parse_number(ad_data.get('count_meters_metro'))
-
-        # Проверка цены
-        if subscription.min_price is not None and ad_price is not None and ad_price < subscription.min_price:
+        # Цена
+        if subscription.min_price and ad_price and ad_price < subscription.min_price:
             return False
-        if subscription.max_price is not None and ad_price is not None and ad_price > subscription.max_price:
+        if subscription.max_price and ad_price and ad_price > subscription.max_price:
             return False
 
-        # Проверка количества комнат (используем int, так как комнаты целые)
-        if subscription.min_rooms is not None and ad_rooms is not None and int(ad_rooms) < subscription.min_rooms:
+        # Количество комнат
+        if subscription.min_rooms and ad_rooms is not None and int(ad_rooms) < subscription.min_rooms:
             return False
-        if subscription.max_rooms is not None and ad_rooms is not None and int(ad_rooms) > subscription.max_rooms:
-            return False
-
-        # Проверка площади квартиры
-        if subscription.min_flat is not None and ad_flat_area is not None and ad_flat_area < subscription.min_flat:
-            return False
-        if subscription.max_flat is not None and ad_flat_area is not None and ad_flat_area > subscription.max_flat:
+        if subscription.max_rooms and ad_rooms is not None and int(ad_rooms) > subscription.max_rooms:
             return False
 
-        # Проверка района
+        # Площадь проверяем только если она >0
+        if ad_flat_area and subscription.min_flat and ad_flat_area < subscription.min_flat:
+            return False
+        if ad_flat_area and subscription.max_flat and ad_flat_area > subscription.max_flat:
+            return False
+
+        # Район
         if subscription.district != 'ANY' and ad_data.get('location') != subscription.district:
             return False
 
-        # Проверка расстояния до метро
-        if (ad_metro_distance is not None and
-                subscription.max_metro_distance is not None and
-                ad_metro_distance > subscription.max_metro_distance):
+        # Метро
+        if ad_metro_distance and subscription.max_metro_distance and ad_metro_distance > subscription.max_metro_distance:
             return False
 
         return True
-    except Exception as e:
-        print(f"Ошибка при проверке соответствия подписки: {e}")
-        return False
 
+    except Exception as e:
+        logger.error(f"Ошибка в фильтрации подписки: {e}", exc_info=True)
+        return False
 
 # @client.on(events.NewMessage(chats=channel_entities))
 async def new_message_handler(event):
@@ -505,11 +483,9 @@ async def new_message_handler(event):
     if event.message:
         text = event.message.text or ""
         media_items = await download_media(event.message)
-
         # Обрабатываем текст с Yandex GPT
         contacts = await process_contacts(text)
         print(contacts)
-
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
         print(help_text)
 
