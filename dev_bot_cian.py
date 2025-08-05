@@ -27,6 +27,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+from dev_bot import process_text_with_gpt2
 from district import get_coords_by_address, get_district_by_coords
 from make_info import process_text_with_gpt_adress, process_text_with_gpt_price, process_text_with_gpt_sq, \
     process_text_with_gpt_rooms
@@ -46,6 +47,9 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID_DEV")
 # Настройка логирования
+logging.basicConfig(level=logging.INFO)
+
+logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 bot2 = Bot(token=os.getenv("DEV_BOT_TOKEN"))
@@ -204,97 +208,105 @@ async def check_subscriptions_and_notify(info_instance):
             await send_notification(subscription.user_id, ad_data, info_instance.message)
 
 def is_ad_match_subscription(ad_data, subscription):
-    """Синхронная функция проверки соответствия подписки"""
+    """
+    Проверяет, подходит ли объявление под параметры подписки.
+    Учитывает:
+      - 0 комнат = студия (отсекается, если подписка >=1 комнаты)
+      - 0 м² = нераспознанная площадь (не используется для фильтрации)
+    """
     try:
-        # Функция для преобразования в целое число
-        def parse_int(value):
-            if value is None:
-                return None
-            if isinstance(value, str):
-                # Удаляем все нецифровые символы
-                value = ''.join(c for c in value if c.isdigit())
-                return int(value) if value else None
-            return int(value) if value is not None else None
+        ad_price = safe_parse_number(ad_data.get('price'))
+        ad_rooms = safe_parse_number(ad_data.get('rooms'))
+        ad_flat_area = safe_parse_number(ad_data.get('count_meters_flat'))
+        ad_metro_distance = safe_parse_number(ad_data.get('count_meters_metro'))
 
-        # Преобразуем значения
-        ad_price = parse_int(ad_data['price'])
-        ad_rooms = parse_int(ad_data['rooms'])
-        ad_flat_area = parse_int(ad_data.get('count_meters_flat'))
-        ad_metro_distance = parse_int(ad_data.get('count_meters_metro'))
-
-        # Проверка цены
-        if subscription.min_price is not None and ad_price is not None and ad_price < subscription.min_price:
+        # Цена
+        if subscription.min_price and ad_price and ad_price < subscription.min_price:
             return False
-        if subscription.max_price is not None and ad_price is not None and ad_price > subscription.max_price:
+        if subscription.max_price and ad_price and ad_price > subscription.max_price:
             return False
 
-        # Проверка количества комнат
-        if subscription.min_rooms is not None and ad_rooms is not None and ad_rooms < subscription.min_rooms:
+        # Количество комнат
+        if subscription.min_rooms and ad_rooms is not None and int(ad_rooms) < subscription.min_rooms:
             return False
-        if subscription.max_rooms is not None and ad_rooms is not None and ad_rooms > subscription.max_rooms:
-            return False
-
-        # Проверка площади квартиры
-        if subscription.min_flat is not None and ad_flat_area is not None and ad_flat_area < subscription.min_flat:
-            return False
-        if subscription.max_flat is not None and ad_flat_area is not None and ad_flat_area > subscription.max_flat:
+        if subscription.max_rooms and ad_rooms is not None and int(ad_rooms) > subscription.max_rooms:
             return False
 
-        # Проверка района
+        # Площадь проверяем только если она >0
+        if ad_flat_area and subscription.min_flat and ad_flat_area < subscription.min_flat:
+            return False
+        if ad_flat_area and subscription.max_flat and ad_flat_area > subscription.max_flat:
+            return False
+
+        # Район
         if subscription.district != 'ANY' and ad_data.get('location') != subscription.district:
             return False
 
-        # Проверка расстояния до метро
-        if (ad_metro_distance is not None and
-            subscription.max_metro_distance is not None and
-            ad_metro_distance > subscription.max_metro_distance):
+        # Метро
+        if ad_metro_distance and subscription.max_metro_distance and ad_metro_distance > subscription.max_metro_distance:
             return False
 
         return True
+
     except Exception as e:
-        print(f"Ошибка при проверке соответствия подписки: {e}")
+        logger.error(f"Ошибка в фильтрации подписки: {e}", exc_info=True)
         return False
+
+def safe_parse_number(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = value.replace(',', '.').strip()
+        # оставляем только цифры и точку
+        value = ''.join(c for c in value if c.isdigit() or c == '.')
+    try:
+        return float(value)
+    except:
+        return None
+
 
 async def send_notification(user_id: int, ad_data: dict, message):
     """
-    Отправляет уведомление о новом объявлении пользователю (без первого изображения)
+    Отправка уведомления пользователю с поддержкой URL изображений (aiogram v3)
     """
     try:
-        message_text = message.new_text
-        images = ad_data.get('images') or []  # Защита от None
+        safe_text = message.new_text
 
-        if len(images) > 1:  # Только если есть хотя бы 2 изображения
-            media_group = []
+        # Добавляем контакты, если их нет
+        if "Контакты" not in safe_text:
+            contacts = await asyncio.to_thread(process_text_with_gpt2, message.text)
+            if contacts and contacts.lower() not in ['нет', 'нет.']:
+                safe_text += " Контакты: " + contacts
 
-            # Начинаем с ВТОРОГО изображения (индекс 1)
-            for img_url in images[1:10]:  # Берём с 1 до 10 индекса
-                if img_url.startswith(("http://", "https://")):
-                    media_group.append(InputMediaPhoto(media=img_url))
-                else:
-                    # Если это локальный путь
-                    with open(img_url, "rb") as img_file:
-                        media_group.append(InputMediaPhoto(media=img_file))
+        media_paths = ad_data.get('images') or []
+        media_group = []
 
-            # Первое изображение в группе (которое было вторым в исходном списке) получает подпись
-            if media_group:
-                media_group[0].caption = message_text
-                media_group[0].parse_mode = "Markdown"
+        for idx, media_path in enumerate(media_paths[:10]):
+            caption = safe_text if idx == 0 else None
+
+            # Aiogram v3 требует именованные аргументы
+            if str(media_path).startswith("http"):
+                media_group.append(InputMediaPhoto(media=media_path, caption=caption))
+            elif os.path.exists(media_path):
+                # локальный файл открывать не нужно, aiogram сам откроет по пути
+                media_group.append(InputMediaPhoto(media=open(media_path, "rb"), caption=caption))
+
+        if media_group:
+            if len(media_group) == 1:
+                await bot2.send_photo(chat_id=user_id, photo=media_group[0].media, caption=safe_text)
+            else:
                 await bot2.send_media_group(chat_id=user_id, media=media_group)
-
-        # Если изображений 0 или 1 — отправляем просто текст
         else:
-            await bot2.send_message(
-                chat_id=user_id,
-                text=message_text,
-                parse_mode="Markdown"
-            )
+            await bot2.send_message(chat_id=user_id, text=safe_text)
+
+        logger.info(f"[NOTIFY] Отправлено объявление пользователю {user_id}")
 
     except RetryAfter as e:
+        logger.warning(f"[NOTIFY] Flood control, повтор через {e.timeout} сек.")
         await asyncio.sleep(e.timeout)
         await send_notification(user_id, ad_data, message)
     except Exception as e:
-        print(f"Ошибка при отправке уведомления: {e}")
-
+        logger.error(f"[NOTIFY] Ошибка при отправке уведомления пользователю {user_id}: {e}", exc_info=True)
 
 @dp.message()
 async def message_handler(message: Message):
