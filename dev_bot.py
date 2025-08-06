@@ -288,8 +288,9 @@ def is_ad_match_subscription(ad_data, subscription):
     """
     Проверяет, подходит ли объявление под параметры подписки.
     Учитывает:
-      - 0 комнат = студия (отсекается, если подписка >=1 комнаты)
+      - 0 комнат = студия (приравнивается к 1 комнате)
       - 0 м² = нераспознанная площадь (не используется для фильтрации)
+      - если параметр подписки не задан (None или 'ANY'), он пропускается
     """
     try:
         ad_price = safe_parse_number(ad_data.get('price'))
@@ -297,33 +298,42 @@ def is_ad_match_subscription(ad_data, subscription):
         ad_flat_area = safe_parse_number(ad_data.get('count_meters_flat'))
         ad_metro_distance = safe_parse_number(ad_data.get('count_meters_metro'))
 
+        # Студии (0 комнат) считаем как 1 комнату
+        if ad_rooms == 0:
+            ad_rooms = 1
+
         # Цена
-        if subscription.min_price and ad_price and ad_price < subscription.min_price:
+        if subscription.min_price is not None and ad_price is not None and ad_price < subscription.min_price:
             return False
-        if subscription.max_price and ad_price and ad_price > subscription.max_price:
+        if subscription.max_price is not None and ad_price is not None and ad_price > subscription.max_price:
             return False
 
         # Количество комнат
-        if subscription.min_rooms and ad_rooms is not None and int(ad_rooms) < subscription.min_rooms:
+        if subscription.min_rooms is not None and ad_rooms is not None and int(ad_rooms) < subscription.min_rooms:
             return False
-        if subscription.max_rooms and ad_rooms is not None and int(ad_rooms) > subscription.max_rooms:
+        if subscription.max_rooms is not None and ad_rooms is not None and int(ad_rooms) > subscription.max_rooms:
             return False
 
         # Площадь проверяем только если она >0
-        if ad_flat_area and subscription.min_flat and ad_flat_area < subscription.min_flat:
+        if ad_flat_area and subscription.min_flat is not None and ad_flat_area < subscription.min_flat:
             return False
-        if ad_flat_area and subscription.max_flat and ad_flat_area > subscription.max_flat:
+        if ad_flat_area and subscription.max_flat is not None and ad_flat_area > subscription.max_flat:
             return False
 
         # Район
-        if subscription.district != 'ANY' and ad_data.get('location') != subscription.district:
+        if subscription.district not in (None, 'ANY') and ad_data.get('location') != subscription.district:
             return False
 
         # Метро
-        if ad_metro_distance and subscription.max_metro_distance and ad_metro_distance > subscription.max_metro_distance:
+        if ad_metro_distance is not None and subscription.max_metro_distance is not None \
+           and ad_metro_distance > subscription.max_metro_distance:
             return False
 
         return True
+
+    except Exception as e:
+        logger.error(f"Ошибка при проверке подписки {subscription.id}: {e}")
+        return False
 
     except Exception as e:
         logger.error(f"Ошибка в фильтрации подписки: {e}", exc_info=True)
