@@ -28,6 +28,7 @@ from district import get_district_by_coords, get_coords_by_address
 from make_info import process_text_with_gpt_price, process_text_with_gpt_sq, process_text_with_gpt_adress, \
     process_text_with_gpt_rooms
 from meters import get_coordinates, find_nearest_metro
+from proccess import process_text_with_gpt2, process_text_with_gpt3, process_text_with_gpt
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -58,151 +59,6 @@ DOWNLOAD_FOLDER = "downloads/"
 # Инициализация клиента Telethon
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH, system_version='1.2.3-zxc-custom',
                         device_model='aboba-linux-custom', app_version='1.0.1')
-
-
-def process_text_with_gpt(text):
-    """Отправка текста в Yandex GPT и получение измененного текста"""
-    sdk = YCloudML(
-        folder_id=os.getenv("FOLDER_ID"),
-        auth=os.getenv("AUTH"),
-    )
-    model = sdk.models.completions("yandexgpt")
-    # Variant 1: wait for the operation to complete using 5-second sleep periods
-
-    messages_1 = [
-        {
-            "role": "system",
-            "text": """
-                Вы— помощник, который превращает объявление об аренде квартиры или комнаты в структурированный шаблон.
-
-                Если текст не является объявлением об аренде, просто верните слово нет.
-
-                Если это объявление об аренде, выведите точно в таком формате (каждая строка— новый пункт):
-
-                🏠 Комнаты: <количество комнат или описание комнат*>
-                💰 Цена: <цена + условия оплаты*>
-                📍 Адрес: <улица, метро или район*>
-                ⚙️ Условия: <дата заселения, прочие условия*>
-                📝 Описание: <дополнительное описание, рядом инфраструктура, ограничения>
-
-                Ничего больше не добавляйте: ни «Контакты:», ни лишних эмодзи, ни ссылок. '*' - обязательный символ в шаблоне
-                """,
-        },
-        {
-            "role": "user",
-            "text": text,
-        },
-    ]
-    result = (
-        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
-    )
-    return result.text
-
-
-def process_text_with_gpt3(text):
-    """Отправка текста в Yandex GPT и получение измененного текста"""
-    sdk = YCloudML(
-        folder_id=os.getenv("FOLDER_ID"),
-        auth=os.getenv("AUTH"),
-    )
-    model = sdk.models.completions("yandexgpt")
-    # Variant 1: wait for the operation to complete using 5-second sleep periods
-
-    messages_1 = [
-        {
-            "role": "system",
-            "text": """
-                Вы — надёжный классификатор объявлений об аренде квартир и комнат в Москве.
-                Вашей задачей является однозначно определить: является ли этот текст **объявлением об аренде** (сдаётся квартира или комната физическим лицом, без рекламы агентств и без продажи). 
-
-                Критерии «аренда»:
-                - В тексте присутствуют слова «сдаётся», «сдаются», «сдаю», «аренда», «арендую».
-                - Указана цена или диапазон цен.
-                - Есть контакт (телефон или упоминание Telegram‑ссылки).
-                - Нет слов «продаётся», «продаю», «в продажу», «продажа», «ищу квартиру», «резюме».
-
-                **Инструкция**:  
-                – Если текст **является** объявлением об аренде — ответьте ровно `Да`.  
-                – Если текст **не является** объявлением об аренде — ответьте ровно `Нет`.  
-                – Ничего больше не выводите, только одно слово (с заглавной буквы).
-                """,
-        },
-        {
-            "role": "user",
-            "text": text,
-        },
-    ]
-    result = (
-        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
-    )
-    return result.text
-
-
-def text_with_gpt(text):
-    """Отправка текста в Yandex GPT и получение измененного текста"""
-    sdk = YCloudML(
-        folder_id=os.getenv("FOLDER_ID"),
-        auth=os.getenv("AUTH"),
-    )
-    model = sdk.models.completions("yandexgpt")
-    # Variant 1: wait for the operation to complete using 5-second sleep periods
-
-    messages_1 = [
-        {
-            "role": "system",
-            "text": "какой сегодня год?",
-        },
-        {
-            "role": "user",
-            "text": text,
-        },
-    ]
-    result = (
-        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
-    )
-    return result.text
-
-
-def process_text_with_gpt2(text):
-    """Отправка текста в Yandex GPT и получение измененного текста"""
-    sdk = YCloudML(
-        folder_id=os.getenv("FOLDER_ID"),
-        auth=os.getenv("AUTH"),
-    )
-    model = sdk.models.completions("yandexgpt")
-    # Variant 1: wait for the operation to complete using 5-second sleep periods
-
-    messages_1 = [
-        {
-            "role": "system",
-            "text": "Извлекай контактную информацию из текста объявлений и преобразуй её в чистую Telegram-ссылку. Если ссылка на циан, то оставляй ссылку такой же .НЕ УКАЗЫВАЙ ССЫЛКИ НА ДРУГИЕ РЕСУРСЫ И КАНАЛЫ, БОТОВ, ТОЛЬКО НА ПРОФИЛЬ "
-                    "Правила обработки:\n"
-                    "1. Если найдешь фразы 'написать', 'контакты:', 'связь:' или подобные - извлеки контактные данные\n"
-                    "2. Для Telegram контактов возвращай только чистую ссылку в формате https://t.me/XXXX или tg://user?id=XXXXXXX \n"
-                    "3. Если контакт указан как @username - оставь так же\n"
-                    "4. Телефонные номера и другие контакты оставляй без изменений\n"
-                    "5. Всё остальное содержимое объявления не изменяй\n\n"
-                    "6. Если ссылка на 'https://www.cian.ru/', то оставляй без изменений\n"
-                    "7. Возвращай только одну ссылку или номер телефона на профиль человека, никаких ссылок на другие боты и каналы\n"
-                    "8. Если указан номер телефона, извлекай только его, ссылки не нужны\n"
-                    "Примеры преобразования:\n"
-                    "1. 'Контакты: [Анна](tg://user?id=12345)' → 'tg://user?id=12345'\n"
-                    "2. 'Написать: @ivanov' → @ivanov\n"
-                    "3. 'Телефон: +79161234567' → оставить без изменений\n"
-                    "4. 'Контакты: [Менеджер](https://t.me/manager)' → https://t.me/manager\n\n"
-                    "5. 'Циан, контакты (https://www.cian.ru/rent/flat/319392264) уровень доверия низкий ⚠️ (http://t.me/lvngrm_msk/26)выложить квартиру бесплатно (http://t.me/lvngrm_bot?start=PM)' → https://www.cian.ru/rent/flat/319392264\n\n"
-                    "Важно: возвращай только ОДНУ саму ссылку, без дополнительного текста и форматирования! Если контактов нет - ответь 'нет'"
-                    "пример: 'нет'"
-        },
-        {
-            "role": "user",
-            "text": text,
-        },
-    ]
-    result = (
-        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
-    )
-    return result.text
 
 
 async def get_username_by_id(user_id):
@@ -349,9 +205,13 @@ async def download_images(message):
 
 
 async def check_subscriptions_and_notify(info_instance):
+    logger.info(f"🔔 Начало обработки подписок для объявления {info_instance.id}")
     # Получаем все активные подписки
     subscriptions = await sync_to_async(list)(Subscription.objects.filter(is_active=True))
-
+    logger.info(f"📋 Найдено {len(subscriptions)} активных подписок")
+    if not subscriptions:
+        logger.info("❌ Нет активных подписок, пропускаем уведомления")
+        return
     # Получаем данные объявления
     ad_data = {
         'price': info_instance.price,
@@ -363,10 +223,14 @@ async def check_subscriptions_and_notify(info_instance):
         'images': info_instance.message.images,
         'description': info_instance.message.new_text
     }
-
     for subscription in subscriptions:
-        if await sync_to_async(is_ad_match_subscription)(ad_data, subscription):
+        logger.info(f"🔍 Проверка подписки {subscription.id} (пользователь: {subscription.user_id})")
+        is_match = await sync_to_async(is_ad_match_subscription)(ad_data, subscription)
+        if is_match:
+            logger.info(f"✅ Объявление подходит для подписки {subscription.id}")
             await send_notification(subscription.user_id, ad_data, info_instance.message)
+        else:
+            logger.info(f"❌ Объявление НЕ подходит для подписки {subscription.id}")
 
 
 def escape_markdown(text: str) -> str:
@@ -389,6 +253,7 @@ def safe_parse_number(value):
 async def send_notification(user_id: int, ad_data: dict, message):
     """
     Отправка уведомления пользователю с поддержкой URL изображений (aiogram v3)
+
     """
     try:
         safe_text = message.new_text

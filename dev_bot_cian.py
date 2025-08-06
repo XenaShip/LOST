@@ -32,6 +32,7 @@ from district import get_coords_by_address, get_district_by_coords
 from make_info import process_text_with_gpt_adress, process_text_with_gpt_price, process_text_with_gpt_sq, \
     process_text_with_gpt_rooms
 from meters import find_nearest_metro
+from proccess import process_text_with_gpt
 
 # Настроим Django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
@@ -53,32 +54,6 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 bot2 = Bot(token=os.getenv("DEV_BOT_TOKEN"))
-
-def process_text_with_gpt(text):
-    """Отправка текста в Yandex GPT и получение измененного текста"""
-    sdk = YCloudML(
-        folder_id=os.getenv("FOLDER_ID"),
-        auth=os.getenv("AUTH"),
-    )
-
-    model = sdk.models.completions("yandexgpt")
-
-    # Variant 1: wait for the operation to complete using 5-second sleep periods
-
-    messages_1 = [
-        {
-            "role": "system",
-            "text": "Переформулируй объявление под шаблон: кол-во комнат, цена, адрес, условия, описание. Напиши все как можно короче. Добавь эмодзи",
-        },
-        {
-            "role": "user",
-            "text": text,
-        },
-    ]
-    result = (
-        sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
-    )
-    return result.text
 
 
 async def send_images_with_text(bot, chat_id, text, images):
