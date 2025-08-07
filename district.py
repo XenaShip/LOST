@@ -34,4 +34,3 @@ def get_coords_by_address(address):
         print(f"❌ Ошибка получения координат: {e}")
         return None
 
-
