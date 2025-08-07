@@ -312,13 +312,15 @@ async def my_subscription(update: Update, context: CallbackContext) -> None:
     sub = await get_subscription(update.effective_user.id)
     if sub:
         district_name = dict(DEVSubscription.DISTRICT_CHOICES).get(sub.district, 'Не важно')
+        metro_text = 'Близко' if getattr(sub, 'metro_close', False) else 'не важно'
+
         text = (
             "📋 Ваша текущая подписка:\n\n"
             f"• Цена: {sub.min_price or 'не важно'} - {sub.max_price or 'не важно'} руб\n"
             f"• Комнат: {sub.min_rooms or 'не важно'}-{sub.max_rooms or 'не важно'}\n"
             f"• Площадь: {sub.min_flat or 'не важно'}-{sub.max_flat or 'не важно'} м²\n"
             f"• Округ: {district_name}\n"
-            f"• До метро: ≤{sub.max_metro_distance or 'не важно'} м\n\n"
+             f"• До метро: {metro_text}\n\n"
             "Для изменения параметров нажмите «Подписка»"
         )
     else:

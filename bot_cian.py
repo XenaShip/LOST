@@ -93,7 +93,7 @@ def fetch_page_data(url):
     driver = None
     try:
         # Инициализация драйвера с автоматической установкой ChromeDriver
-        driver = uc.Chrome(options=options)
+        driver = uc.Chrome(options=options, version_main=138)
 
         driver.set_page_load_timeout(60)
         logging.info(f"Открываю страницу: {url}")

@@ -77,12 +77,10 @@ def get_district_keyboard():
 
 def get_metro_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("До 5 минут (400м)", callback_data="metro_400")],
-        [InlineKeyboardButton("До 10 минут (800м)", callback_data="metro_800")],
-        [InlineKeyboardButton("До 15 минут (1200м)", callback_data="metro_1200")],
-        [InlineKeyboardButton("До 20 минут (1600м)", callback_data="metro_1600")],
-        [InlineKeyboardButton("Не важно", callback_data="metro_any")],
+        [InlineKeyboardButton("Близко", callback_data="metro_close")],
+        [InlineKeyboardButton("🚫 Не важно",        callback_data="metro_any")],
     ])
+
 
 
 def get_confirm_keyboard():
@@ -126,7 +124,7 @@ def update_or_create_subscription(user_id, username, params):
             'min_flat': params.get('min_flat'),
             'max_flat': params.get('max_flat'),
             'district': params.get('district', 'ANY'),
-            'max_metro_distance': params.get('max_metro_distance'),
+            'metro_close': params.get('metro_close', False),
             'is_active': True
         }
     )
@@ -239,26 +237,33 @@ async def process_metro(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
 
-    data = query.data.split('_')
-    if data[1] == 'any':
-        context.user_data['max_metro_distance'] = None
-    else:
-        context.user_data['max_metro_distance'] = int(data[1])
+    # Сохраняем выбор пользователя
+    if query.data == 'metro_close':
+        context.user_data['metro_close'] = True
+    else:  # 'metro_any'
+        context.user_data['metro_close'] = False
 
+    # Получаем человекочитаемое название округа
     district_name = dict(Subscription.DISTRICT_CHOICES).get(
-        context.user_data.get('district'), 'Не важно'
+        context.user_data.get('district'),
+        'Не важно'
     )
 
+    # Формируем текст сводки
     summary = (
         "✅ Проверьте параметры подписки:\n\n"
-        f"• Цена: {context.user_data.get('min_price', 'не важно')} - {context.user_data.get('max_price', 'не важно')} руб\n"
-        f"• Комнат: {context.user_data.get('min_rooms', 'не важно')}-{context.user_data.get('max_rooms', 'не важно')}\n"
-        f"• Площадь: {context.user_data.get('min_flat', 'не важно')}-{context.user_data.get('max_flat', 'не важно')} м²\n"
+        f"• Цена: {context.user_data.get('min_price', 'не важно')} - "
+        f"{context.user_data.get('max_price', 'не важно')} ₽\n"
+        f"• Комнат: {context.user_data.get('min_rooms', 'не важно')}-"
+        f"{context.user_data.get('max_rooms', 'не важно')}\n"
+        f"• Площадь: {context.user_data.get('min_flat', 'не важно')}-"
+        f"{context.user_data.get('max_flat', 'не важно')} м²\n"
         f"• Округ: {district_name}\n"
-        f"• До метро: ≤{context.user_data.get('max_metro_distance', 'не важно')} м\n\n"
+        f"• До метро: {'Близко' if context.user_data['metro_close'] else '🚫 не важно'}\n\n"
         "Подтвердите ваш выбор:"
     )
 
+    # Показываем сводку с кнопками подтверждения
     await query.edit_message_text(
         text=summary,
         reply_markup=get_confirm_keyboard()
@@ -308,13 +313,15 @@ async def my_subscription(update: Update, context: CallbackContext) -> None:
     sub = await get_subscription(update.effective_user.id)
     if sub:
         district_name = dict(Subscription.DISTRICT_CHOICES).get(sub.district, 'Не важно')
+        metro_text = 'Близко' if getattr(sub, 'metro_close', False) else 'не важно'
+
         text = (
             "📋 Ваша текущая подписка:\n\n"
             f"• Цена: {sub.min_price or 'не важно'} - {sub.max_price or 'не важно'} руб\n"
             f"• Комнат: {sub.min_rooms or 'не важно'}-{sub.max_rooms or 'не важно'}\n"
             f"• Площадь: {sub.min_flat or 'не важно'}-{sub.max_flat or 'не важно'} м²\n"
             f"• Округ: {district_name}\n"
-            f"• До метро: ≤{sub.max_metro_distance or 'не важно'} м\n\n"
+             f"• До метро: {metro_text}\n\n"
             "Для изменения параметров нажмите «Подписка»"
         )
     else:
