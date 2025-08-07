@@ -114,4 +114,3 @@ def process_text_with_gpt_adress(text):
     )
     return result.text
 
-

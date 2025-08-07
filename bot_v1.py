@@ -20,7 +20,7 @@ from yandex_cloud_ml_sdk import YCloudML
 from bot_cian import message_handler
 from district import get_district_by_coords, get_coords_by_address
 from make_info import process_text_with_gpt_price, process_text_with_gpt_sq, process_text_with_gpt_adress, \
-    process_text_with_gpt_rooms
+    process_text_with_gpt_rooms, process_text_with_gpt_metro
 from meters import get_coordinates, find_nearest_metro
 
 # Загружаем переменные окружения
@@ -339,11 +339,12 @@ async def new_message_handler(event):
                 message=message,
                 price=process_text_with_gpt_price(new_text),
                 count_meters_flat=flat_area,
-                count_meters_metro=find_nearest_metro(*coords),
+                count_meters_metro=process_text_with_gpt_metro(text),
                 location=get_district_by_coords(*coords),
                 adress=process_text_with_gpt_adress(new_text),
                 rooms=process_text_with_gpt_rooms(new_text)
             )
+            print(info)
             asyncio.create_task(check_subscriptions_and_notify(info))
         # Отправляем сообщение в Telegram
         bot = Bot(token=BOT_TOKEN)

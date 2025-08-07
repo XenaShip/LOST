@@ -37,6 +37,10 @@ from django.db import models
 
 
 class Subscription(models.Model):
+    metro_close = models.BooleanField(
+        default=False,
+        help_text="True — только до 2000 м от метро; False — не важно"
+    )
     DISTRICT_CHOICES = [
         ('CAO', 'ЦАО'),
         ('YUAO', 'ЮАО'),
@@ -111,7 +115,10 @@ class DEVSubscription(models.Model):
         ('VAO', 'ВАО'),
         ('ANY', 'Не важно'),
     ]
-
+    metro_close = models.BooleanField(
+        default=False,
+        help_text="True — только до 2000 м от метро; False — не важно"
+    )
     user_id = models.BigIntegerField(unique=True)
     username = models.CharField(max_length=100, blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)

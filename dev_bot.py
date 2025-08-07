@@ -22,7 +22,6 @@ from django.core.files.storage import default_storage
 from yandex_cloud_ml_sdk import YCloudML
 import sys
 import os
-
 from district import get_district_by_coords, get_coords_by_address
 from make_info import process_text_with_gpt_price, process_text_with_gpt_sq, process_text_with_gpt_adress, \
     process_text_with_gpt_rooms
@@ -287,56 +286,81 @@ async def send_notification(user_id: int, ad_data: dict, message):
 def is_ad_match_subscription(ad_data, subscription):
     """
     Проверяет, подходит ли объявление под параметры подписки.
-    Учитывает:
-      - 0 комнат = студия (приравнивается к 1 комнате)
-      - 0 м² = нераспознанная площадь (не используется для фильтрации)
-      - если параметр подписки не задан (None или 'ANY'), он пропускается
+
+    Параметры:
+      - ad_data: dict с ключами
+          'price'              – цена (str или число),
+          'rooms'              – количество комнат (str или число; 0 = студия → приравнивается к 1),
+          'count_meters_flat'  – площадь (str или число),
+          'location'           – район (строка),
+          'count_meters_metro' – расстояние до метро (str или число).
+      - subscription: объект подписки с атрибутами
+          min_price, max_price (числа или None),
+          min_rooms, max_rooms (числа или None),
+          min_flat, max_flat    (числа или None),
+          district             (строка или 'ANY'),
+          metro_close          (Булево: True = «до 2000 м», False = «не важно»).
+
+    Возвращает:
+      - True, если объявление соответствует всем активным фильтрам подписки.
+      - False иначе.
     """
     try:
-        ad_price = safe_parse_number(ad_data.get('price'))
-        ad_rooms = safe_parse_number(ad_data.get('rooms'))
-        ad_flat_area = safe_parse_number(ad_data.get('count_meters_flat'))
-        ad_metro_distance = safe_parse_number(ad_data.get('count_meters_metro'))
+        # Парсим числовые поля
+        ad_price       = safe_parse_number(ad_data.get('price'))
+        ad_rooms_raw   = safe_parse_number(ad_data.get('rooms'))
+        ad_flat_area   = safe_parse_number(ad_data.get('count_meters_flat'))
+        ad_metro_raw   = safe_parse_number(ad_data.get('count_meters_metro'))
+        ad_location    = ad_data.get('location')
 
-        # Студии (0 комнат) считаем как 1 комнату
+        # Считаем студию (0 комнат) как 1 комнату
+        ad_rooms = int(ad_rooms_raw) if ad_rooms_raw is not None else None
         if ad_rooms == 0:
             ad_rooms = 1
 
-        # Цена
-        if subscription.min_price is not None and ad_price is not None and ad_price < subscription.min_price:
-            return False
-        if subscription.max_price is not None and ad_price is not None and ad_price > subscription.max_price:
-            return False
+        # Очищаем метро: None или <=0 → None, иначе число
+        ad_metro = ad_metro_raw if ad_metro_raw and ad_metro_raw > 0 else None
 
-        # Количество комнат
-        if subscription.min_rooms is not None and ad_rooms is not None and int(ad_rooms) < subscription.min_rooms:
-            return False
-        if subscription.max_rooms is not None and ad_rooms is not None and int(ad_rooms) > subscription.max_rooms:
-            return False
+        # 1) Фильтр по цене
+        if subscription.min_price is not None and ad_price is not None:
+            if ad_price < subscription.min_price:
+                return False
+        if subscription.max_price is not None and ad_price is not None:
+            if ad_price > subscription.max_price:
+                return False
 
-        # Площадь проверяем только если она >0
-        if ad_flat_area and subscription.min_flat is not None and ad_flat_area < subscription.min_flat:
-            return False
-        if ad_flat_area and subscription.max_flat is not None and ad_flat_area > subscription.max_flat:
-            return False
+        # 2) Фильтр по комнатам
+        if subscription.min_rooms is not None and ad_rooms is not None:
+            if ad_rooms < subscription.min_rooms:
+                return False
+        if subscription.max_rooms is not None and ad_rooms is not None:
+            if ad_rooms > subscription.max_rooms:
+                return False
 
-        # Район
-        if subscription.district not in (None, 'ANY') and ad_data.get('location') != subscription.district:
-            return False
+        # 3) Фильтр по площади
+        if ad_flat_area and subscription.min_flat is not None:
+            if ad_flat_area < subscription.min_flat:
+                return False
+        if ad_flat_area and subscription.max_flat is not None:
+            if ad_flat_area > subscription.max_flat:
+                return False
 
-        # Метро
-        if ad_metro_distance is not None and subscription.max_metro_distance is not None \
-           and ad_metro_distance > subscription.max_metro_distance:
-            return False
+        # 4) Фильтр по району
+        if subscription.district not in (None, 'ANY'):
+            if ad_location != subscription.district:
+                return False
+
+        # 5) Фильтр по метро (булево значение)
+        if subscription.metro_close:
+            # если нужно «близко», расстояние должно быть известно и ≤2000
+            if ad_metro is None or ad_metro > 2000:
+                return False
+        # если metro_close == False → любой ad_metro подходит
 
         return True
 
     except Exception as e:
-        logger.error(f"Ошибка при проверке подписки {subscription.id}: {e}")
-        return False
-
-    except Exception as e:
-        logger.error(f"Ошибка в фильтрации подписки: {e}", exc_info=True)
+        logger.error(f"Ошибка при проверке подписки {getattr(subscription, 'id', '?')}: {e}", exc_info=True)
         return False
 
 # @client.on(events.NewMessage(chats=channel_entities))
@@ -396,6 +420,7 @@ async def new_message_handler(event):
                 adress=address,
                 rooms=process_text_with_gpt_rooms(new_text)
             )
+            print(info)
 
             # Уведомляем подписчиков
             asyncio.create_task(check_subscriptions_and_notify(info))
