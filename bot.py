@@ -466,7 +466,6 @@ async def main():
             "Sdat_Kvartiru0",
             "bestflats_msk",
             "nebabushkin_msk",
-            "keystomoscow",
         ]
 
         try:
