@@ -42,6 +42,9 @@ from main.models import MESSAGE, INFO, Subscription  # Используем но
 # Настройка логгера
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+processed_group_ids = set()      # (chat_id, grouped_id)
+processed_message_ids = set()
+
 
 bot2 = Bot(token=os.getenv("TOKEN3"))
 # Конфигурация
@@ -350,6 +353,26 @@ def is_ad_match_subscription(ad_data, subscription):
         logger.error(f"Ошибка в фильтрации подписки: {e}", exc_info=True)
         return False
 
+async def extract_text_from_event(event):
+    """
+    Если сообщение — часть альбома (grouped_id), собираем подписи со всех
+    сообщений альбома и берём первую непустую. Иначе — обычный text/caption.
+    """
+    msg = event.message
+    if getattr(msg, "grouped_id", None):
+        # Небольшая задержка, чтобы остальные части альбома успели прилететь
+        # (по желанию — можно убрать)
+        # import asyncio
+        # await asyncio.sleep(0.5)
+
+        album_msgs = await client.get_messages(msg.chat_id, min_id=msg.id - 50, max_id=msg.id + 50)
+        album_msgs = [m for m in album_msgs if m and m.grouped_id == msg.grouped_id]
+        album_msgs.sort(key=lambda x: x.id)
+        for m in album_msgs:
+            t = (m.text or "").strip()
+            if t:
+                return t
+    return (msg.text or "").strip()
 
 # @client.on(events.NewMessage(chats=channel_entities))
 async def new_message_handler(event):
@@ -357,23 +380,36 @@ async def new_message_handler(event):
     logger.info(f"Новое сообщение из канала: {event.chat.username or event.chat.title}")
 
     if event.message:
-        text = event.message.text or ""
+        msg = event.message
+
+        key_msg = (msg.chat_id, msg.id)
+        if key_msg in processed_message_ids:
+            logger.info('Skip: already processed this message id')
+            return
+        processed_message_ids.add(key_msg)
+
+        if getattr(msg, "grouped_id", None):
+            key_album = (msg.chat_id, msg.grouped_id)
+            if key_album in processed_group_ids:
+                logger.info('Skip: album already processed')
+                return
+            processed_group_ids.add(key_album)
+        # БЫЛО: text = event.message.text or ""
+        text = await extract_text_from_event(event)  # <-- КЛЮЧЕВАЯ ПРАВКА
+
         media_items = await download_media(event.message)
-        # Обрабатываем текст с Yandex GPT
+
         contacts = await process_contacts(text)
-        print(contacts)
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
-        print(help_text)
-
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
-        print(new_text)
-
         new_text = new_text.replace("*", "\n")
-        if not (help_text.strip().lower().startswith("да") or help_text.strip().lower().startswith("ответ: да")):
+
+        # БЫЛО: строгая проверка на "да"/"ответ: да"
+        if not _is_yes(help_text):
             new_text = 'нет'
-        if contacts.strip().lower().startswith("нет") or contacts.strip().lower().startswith("ответ: нет"):
+        if _is_no(contacts):
             new_text = 'нет'
-        logger.info(f"Обработанный текст: {new_text}")
+        print(new_text)
 
         # Сохраняем сообщение в базу данных
         message = await sync_to_async(MESSAGE.objects.create)(
@@ -422,6 +458,14 @@ async def new_message_handler(event):
         # Задержка между сообщениями
         await asyncio.sleep(5)
 
+
+import re
+
+def _is_yes(s: str | None) -> bool:
+    return bool(s) and re.match(r'^(да|yes|y|true)\b', s.strip(), flags=re.I)
+
+def _is_no(s: str | None) -> bool:
+    return bool(s) and re.match(r'^(нет|no|n|false)\b', s.strip(), flags=re.I)
 
 def check_running():
     pid_file = "bot.pid"

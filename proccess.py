@@ -137,7 +137,7 @@ def process_text_with_gpt2(text):
                     "3. 'Телефон: +79161234567' → оставить без изменений\n"
                     "4. 'Контакты: [Менеджер](https://t.me/manager)' → https://t.me/manager\n\n"
                     "5. 'Циан, контакты (https://www.cian.ru/rent/flat/319392264) уровень доверия низкий ⚠️ (http://t.me/lvngrm_msk/26)выложить квартиру бесплатно (http://t.me/lvngrm_bot?start=PM)' → https://www.cian.ru/rent/flat/319392264\n\n"
-                    "Важно: возвращай только ОДНУ саму ссылку, без дополнительного текста и форматирования! Если контактов нет - ответь 'нет'"
+                    "Важно: возвращай только ОДНУ саму ссылку, без дополнительного текста и форматирования! Если контактов нет - ответь 'нет'. @keys_manager - НЕ подходит"
                     "пример: 'нет'"
         },
         {
@@ -149,6 +149,7 @@ def process_text_with_gpt2(text):
         sdk.models.completions("yandexgpt").configure(temperature=0.5).run(messages_1)
     )
     return result.text
+
 
 def safe_process_text_with_gpt(text: str, force: bool = False) -> str:
     """
