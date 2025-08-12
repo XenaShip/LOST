@@ -7,7 +7,6 @@ import time
 from datetime import datetime
 from telegram import InputMediaVideo
 import telethon
-from aiogram import Bot
 import django
 import requests
 from anyio import current_time
@@ -23,7 +22,7 @@ from yandex_cloud_ml_sdk import YCloudML
 import sys
 import os
 
-from bot_cian import message_handler
+from bot_cian import message_handler, save_message_to_db
 from district import get_district_by_coords, get_coords_by_address
 from make_info import process_text_with_gpt_price, process_text_with_gpt_sq, process_text_with_gpt_adress, \
     process_text_with_gpt_rooms
@@ -226,15 +225,12 @@ async def check_subscriptions_and_notify(info_instance):
         'images': info_instance.message.images,
         'description': info_instance.message.new_text
     }
+    matched_users = set()
     for subscription in subscriptions:
-        logger.info(f"🔍 Проверка подписки {subscription.id} (пользователь: {subscription.user_id})")
         is_match = await sync_to_async(is_ad_match_subscription)(ad_data, subscription)
-        if is_match:
-            logger.info(f"✅ Объявление подходит для подписки {subscription.id}")
+        if is_match and subscription.user_id not in matched_users:
+            matched_users.add(subscription.user_id)
             await send_notification(subscription.user_id, ad_data, info_instance.message)
-        else:
-            logger.info(f"❌ Объявление НЕ подходит для подписки {subscription.id}")
-
 
 def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
@@ -263,7 +259,7 @@ async def send_notification(user_id: int, ad_data: dict, message):
 
         # Добавляем контакты, если их нет
         if "Контакты" not in safe_text:
-            contacts = await asyncio.to_thread(process_text_with_gpt2, message.text)
+            contacts = await process_contacts(safe_text)
             if contacts and contacts.lower() not in ['нет', 'нет.']:
                 safe_text += " Контакты: " + contacts
 
@@ -499,36 +495,30 @@ async def main():
                 password = os.getenv('TELEGRAM_PASSWORD')
                 await client.sign_in(password=password)
 
-        # ✅ Получаем сущности каналов по username
         CHANNEL_USERNAMES = [
-            "keystomoscow",
-            "arendamsc",
-            "onmojetprogat",
-            "loltestneedxenaship",
-            "arendamsk_mo",
-            "lvngrm_msk",
-            "Sdat_Kvartiru0",
-            "bestflats_msk",
-            "nebabushkin_msk",
+            "keystomoscow","arendamsc","onmojetprogat","loltestneedxenaship",
+            "arendamsk_mo","lvngrm_msk","Sdat_Kvartiru0","bestflats_msk","nebabushkin_msk",
         ]
-
         try:
-            channel_entities = await asyncio.gather(*[client.get_entity(username) for username in CHANNEL_USERNAMES])
+            channel_entities = await asyncio.gather(
+                *[client.get_entity(u) for u in CHANNEL_USERNAMES]
+            )
         except Exception as e:
             logger.error(f"Ошибка при получении каналов: {e}")
             return
+
+        @client.on(events.NewMessage(chats=channel_entities))
+        async def handler_wrapper(event):
+            await new_message_handler(event)
+
+        async with client:
+            logger.info("Бот запущен и слушает каналы...")
+            await client.run_until_disconnected()
+
     finally:
+        # снимаем PID-лок ТОЛЬКО при полном завершении работы бота
         if os.path.exists("bot.pid"):
             os.unlink("bot.pid")
-
-    # ✅ Регистрируем обработчик событий вручную
-    @client.on(events.NewMessage(chats=channel_entities))
-    async def handler_wrapper(event):
-        await new_message_handler(event)
-
-    async with client:
-        logger.info("Бот запущен и слушает каналы...")
-        await client.run_until_disconnected()
 
 
 if __name__ == "__main__":
