@@ -206,7 +206,7 @@ async def download_images(message):
             images.append(file_path)
 
 
-async def check_subscriptions_and_notify(info_instance):
+async def check_subscriptions_and_notify(info_instance, contacts):
     logger.info(f"🔔 Начало обработки подписок для объявления {info_instance.id}")
     # Получаем все активные подписки
     subscriptions = await sync_to_async(list)(Subscription.objects.filter(is_active=True))
@@ -230,7 +230,7 @@ async def check_subscriptions_and_notify(info_instance):
         is_match = await sync_to_async(is_ad_match_subscription)(ad_data, subscription)
         if is_match and subscription.user_id not in matched_users:
             matched_users.add(subscription.user_id)
-            await send_notification(subscription.user_id, ad_data, info_instance.message)
+            await send_notification(subscription.user_id, ad_data, info_instance.message, contacts)
 
 def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
@@ -249,7 +249,7 @@ def safe_parse_number(value):
         return None
 
 
-async def send_notification(user_id: int, ad_data: dict, message):
+async def send_notification(user_id: int, ad_data: dict, message, contacts):
     """
     Отправка уведомления пользователю с поддержкой URL изображений (aiogram v3)
 
@@ -259,7 +259,6 @@ async def send_notification(user_id: int, ad_data: dict, message):
 
         # Добавляем контакты, если их нет
         if "Контакты" not in safe_text:
-            contacts = await process_contacts(safe_text)
             if contacts and contacts.lower() not in ['нет', 'нет.']:
                 safe_text += " Контакты: " + contacts
 
@@ -442,7 +441,7 @@ async def new_message_handler(event):
             )
 
             # Уведомляем подписчиков
-            asyncio.create_task(check_subscriptions_and_notify(info))
+            asyncio.create_task(check_subscriptions_and_notify(info, contacts))
 
         # Отправляем результат в Telegram-канал
         if new_text.lower() not in ['нет', 'нет.']:

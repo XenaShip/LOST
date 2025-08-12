@@ -25,7 +25,9 @@ import re
 MODERATION_CHANNEL_ID = int(os.getenv("MODERATION_CHANNEL_ID", "0"))  # ID закрытого канала для модерации
 TERMS_MAX_LEN = int(os.getenv("TERMS_MAX_LEN", "180"))                # лимит символов для "Условия"
 DESC_MAX_LEN  = int(os.getenv("DESC_MAX_LEN",  "800"))                # лимит символов для "Описание"
-
+MENU_INLINE_KB = InlineKeyboardMarkup([
+    [InlineKeyboardButton("🏠 В меню", callback_data="offer_menu")]
+])
 # Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -80,6 +82,7 @@ def get_district_keyboard():
         [InlineKeyboardButton("ВАО", callback_data="district_VAO")],
         [InlineKeyboardButton("Не важно", callback_data="district_ANY")],
     ])
+
 
 
 def get_metro_keyboard():
@@ -320,16 +323,26 @@ async def offer_publish(update: Update, context: CallbackContext) -> int:
         context.user_data.clear()
         return ConversationHandler.END
 
-    await q.edit_message_text("Спасибо за ваше предложение!\nМы опубликуем ваш пост после модерации.")
+    await q.edit_message_text(
+        "Спасибо за ваше предложение!\nМы опубликуем ваш пост после модерации.\n\n"
+        "Чтобы вернуться в меню — нажмите кнопку ниже или отправьте /start",
+        reply_markup=MENU_INLINE_KB
+    )
     context.user_data.clear()
     return ConversationHandler.END
+
 
 async def offer_cancel_cb(update: Update, context: CallbackContext) -> int:
     q = update.callback_query
     await q.answer()
-    await q.edit_message_text("Создание предложения отменено.")
+    await q.edit_message_text(
+        "Создание предложения отменено.\n\n"
+        "Чтобы вернуться в меню — нажмите кнопку ниже или отправьте /start",
+        reply_markup=MENU_INLINE_KB
+    )
     context.user_data.clear()
     return ConversationHandler.END
+
 
 # --- Работа с БД ---
 @sync_to_async
@@ -375,6 +388,7 @@ async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         "🏡 Бот подписки на объявления о недвижимости\n\n"
         "Выберите действие:\n\n"
+        "/offer - предложить свое обхявление,\n\n"
         "/subscribe - подписаться на обновления,\n\n"
         "/my_subscription - моя подписка,\n\n"
         "/unsubscribe - отписаться",
@@ -558,6 +572,11 @@ async def my_subscription(update: Update, context: CallbackContext) -> None:
 
     await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
+async def offer_to_menu(update: Update, context: CallbackContext) -> None:
+    q = update.callback_query
+    await q.answer()
+    # Отправляем новое сообщение с обычной reply-клавиатурой
+    await q.message.reply_text("Главное меню:", reply_markup=get_main_keyboard())
 
 async def unsubscribe(update: Update, context: CallbackContext) -> None:
     if await deactivate_subscription(update.effective_user.id):
@@ -586,7 +605,10 @@ def main() -> None:
         ],
     )
     offer_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📝 Предложить своё$"), offer_start)],
+        entry_points=[
+            MessageHandler(filters.Regex("^📝 Предложить своё$"), offer_start),
+            CommandHandler("offer", offer_start),  # ← новое: /offer
+        ],
         states={
             O_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, offer_price)],
             O_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, offer_address)],
@@ -617,6 +639,7 @@ def main() -> None:
     )
     application.add_handler(conv_handler)
     application.add_handler(offer_conv)
+    application.add_handler(CallbackQueryHandler(offer_to_menu, pattern="^offer_menu$"))
     application.add_handler(MessageHandler(filters.Regex("^▶️ Старт$"), start))
     application.add_handler(MessageHandler(filters.Regex("^📬 Подписаться$"), subscribe))
     application.add_handler(MessageHandler(filters.Regex("^ℹ️ Моя подписка$"), my_subscription))
