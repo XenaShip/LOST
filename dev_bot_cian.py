@@ -2,30 +2,17 @@ import asyncio
 import os
 import aiohttp
 import logging
-import time
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.filters import Command
 from dotenv import load_dotenv
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.keys import Keys
 from telegram import InputMediaPhoto
 from telegram.error import RetryAfter
-from webdriver_manager.chrome import ChromeDriverManager
-from django.conf import settings
 from asgiref.sync import sync_to_async
 import django
-from yandex_cloud_ml_sdk import YCloudML
 from aiogram.types import InputMediaPhoto
-import undetected_chromedriver as uc
 import time
-import aiogram.utils.markdown as md
 import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 from dev_bot import process_text_with_gpt2
 from district import get_coords_by_address, get_district_by_coords
@@ -39,7 +26,7 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
 # Импортируем модель MESSAGE
-from main.models import MESSAGE, INFO, Subscription, DEVMESSAGE, DEVSubscription, DEVINFO
+from main.models import DEVMESSAGE, DEVSubscription, DEVINFO
 
 # Загружаем переменные окружения
 load_dotenv()
@@ -70,7 +57,6 @@ async def send_images_with_text(bot, chat_id, text, images):
 
 
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -81,8 +67,6 @@ def escape_md_v2(text):
 
 def fetch_page_data(url):
     """Загружает страницу через undetected_chromedriver и извлекает текст и изображения"""
-    from webdriver_manager.chrome import ChromeDriverManager
-    from selenium.webdriver.chrome.service import Service
 
     options = uc.ChromeOptions()
     options.add_argument("--headless=new")
@@ -183,83 +167,75 @@ async def check_subscriptions_and_notify(info_instance):
 
 def is_ad_match_subscription(ad_data, subscription):
     """
-    Проверяет, подходит ли объявление под параметры подписки.
+    Соответствие объявления подписке (под новые кнопки цены):
+      ЦЕНА:
+        1) "До 35 000₽"         -> min=None,  max=35000
+        2) "35–65 тыс. ₽"       -> min=35000, max=65000
+        3) "50–100 тыс. ₽"      -> min=50000, max=100000
+        4) "Не важно"           -> min=None,  max=None  (фильтр цены не применяется)
 
-    Параметры:
-      - ad_data: dict с ключами
-          'price'              – цена (str или число),
-          'rooms'              – количество комнат (str или число; 0 = студия → приравнивается к 1),
-          'count_meters_flat'  – площадь (str или число),
-          'location'           – район (строка),
-          'count_meters_metro' – расстояние до метро (str или число).
-      - subscription: объект подписки с атрибутами
-          min_price, max_price (числа или None),
-          min_rooms, max_rooms (числа или None),
-          min_flat, max_flat    (числа или None),
-          district             (строка или 'ANY'),
-          metro_close          (Булево: True = «до 2000 м», False = «не важно»).
-
-    Возвращает:
-      - True, если объявление соответствует всем активным фильтрам подписки.
-      - False иначе.
+      Другое:
+        - Комнаты: 0 -> 1 (студия = 1 комната)
+        - Площадь: сверяем только если > 0
+        - Район: игнорируем, если None/ 'ANY'
+        - Метро: объявление подходит, если расстояние <= лимита
     """
     try:
-        # Парсим числовые поля
-        ad_price       = safe_parse_number(ad_data.get('price'))
-        ad_rooms_raw   = safe_parse_number(ad_data.get('rooms'))
-        ad_flat_area   = safe_parse_number(ad_data.get('count_meters_flat'))
-        ad_metro_raw   = safe_parse_number(ad_data.get('count_meters_metro'))
-        ad_location    = ad_data.get('location')
+        ad_price = safe_parse_number(ad_data.get('price'))
+        ad_rooms = safe_parse_number(ad_data.get('rooms'))
+        ad_flat_area = safe_parse_number(ad_data.get('count_meters_flat'))
+        ad_metro_distance = safe_parse_number(ad_data.get('count_meters_metro'))
 
-        # Считаем студию (0 комнат) как 1 комнату
-        ad_rooms = int(ad_rooms_raw) if ad_rooms_raw is not None else None
+        # Студия как 1 комната
         if ad_rooms == 0:
             ad_rooms = 1
 
-        # Очищаем метро: None или <=0 → None, иначе число
-        ad_metro = ad_metro_raw if ad_metro_raw and ad_metro_raw > 0 else None
+        # ---------- ЦЕНА ----------
+        # Если выбрано "Не важно" -> min_price/max_price должны быть None
+        min_price = getattr(subscription, 'min_price', None)
+        max_price = getattr(subscription, 'max_price', None)
 
-        # 1) Фильтр по цене
-        if subscription.min_price is not None and ad_price is not None:
-            if ad_price < subscription.min_price:
+        if ad_price is not None:
+            if min_price is not None and ad_price < min_price:
                 return False
-        if subscription.max_price is not None and ad_price is not None:
-            if ad_price > subscription.max_price:
+            if max_price is not None and ad_price > max_price:
                 return False
+        # Если ad_price None — не валим объявление по цене, оставляем шанс другим фильтрам
 
-        # 2) Фильтр по комнатам
-        if subscription.min_rooms is not None and ad_rooms is not None:
-            if ad_rooms < subscription.min_rooms:
+        # ---------- КОМНАТЫ ----------
+        if ad_rooms is not None:
+            if getattr(subscription, 'min_rooms', None) is not None and int(ad_rooms) < subscription.min_rooms:
                 return False
-        if subscription.max_rooms is not None and ad_rooms is not None:
-            if ad_rooms > subscription.max_rooms:
-                return False
-
-        # 3) Фильтр по площади
-        if ad_flat_area and subscription.min_flat is not None:
-            if ad_flat_area < subscription.min_flat:
-                return False
-        if ad_flat_area and subscription.max_flat is not None:
-            if ad_flat_area > subscription.max_flat:
+            if getattr(subscription, 'max_rooms', None) is not None and int(ad_rooms) > subscription.max_rooms:
                 return False
 
-        # 4) Фильтр по району
-        if subscription.district not in (None, 'ANY'):
-            if ad_location != subscription.district:
+        # ---------- ПЛОЩАДЬ ----------
+        if ad_flat_area and ad_flat_area > 0:
+            if getattr(subscription, 'min_flat', None) is not None and ad_flat_area < subscription.min_flat:
+                return False
+            if getattr(subscription, 'max_flat', None) is not None and ad_flat_area > subscription.max_flat:
                 return False
 
-        # 5) Фильтр по метро (булево значение)
-        if subscription.metro_close:
-            # если нужно «близко», расстояние должно быть известно и ≤2000
-            if ad_metro is None or ad_metro > 2000:
+        # ---------- РАЙОН ----------
+        sub_district = getattr(subscription, 'district', None)
+        if sub_district not in (None, 'ANY'):
+            # Пример: в объявлении район хранится в ad_data['location']
+            if ad_data.get('location') != sub_district:
                 return False
-        # если metro_close == False → любой ad_metro подходит
+
+        # ---------- МЕТРО ----------
+        # Условие: объявление подходит, если фактическое расстояние <= максимального лимита подписки
+        max_metro = getattr(subscription, 'max_metro_distance', None)
+        if ad_metro_distance is not None and max_metro is not None:
+            if ad_metro_distance > max_metro:
+                return False
 
         return True
 
     except Exception as e:
-        logger.error(f"Ошибка при проверке подписки {getattr(subscription, 'id', '?')}: {e}", exc_info=True)
+        logger.error(f"Ошибка в фильтрации подписки: {e}", exc_info=True)
         return False
+
 
 def safe_parse_number(value):
     if value is None:

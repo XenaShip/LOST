@@ -1,7 +1,6 @@
 from asgiref.sync import sync_to_async
-from django.db.models import Q
 from django.utils import timezone
-from main.models import Subscription, INFO
+from main.models import Subscription
 from main.services.notifications import send_notification_to_user
 
 DISTRICT_MAPPING = {

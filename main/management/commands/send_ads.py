@@ -5,8 +5,6 @@ import json
 from django.core.management.base import BaseCommand
 from dotenv import load_dotenv
 from telegram import Bot, InputMediaPhoto
-from telegram import Update
-from telegram.ext import ApplicationBuilder, ContextTypes
 
 load_dotenv()
 # Настройка Django перед импортом моделей

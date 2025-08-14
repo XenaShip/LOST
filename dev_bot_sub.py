@@ -42,12 +42,10 @@ PRICE, ROOMS, FLAT_AREA, DISTRICT, METRO_DISTANCE, CONFIRM = range(6)
 # --- Клавиатуры ---
 def get_price_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("До 35000₽", callback_data="price_0_35000")],
-        [InlineKeyboardButton("35000-45000₽", callback_data="price_35000_45000")],
-        [InlineKeyboardButton("45000-65000₽", callback_data="price_45000_65000")],
-        [InlineKeyboardButton("65000-100000₽", callback_data="price_65000_100000")],
-        [InlineKeyboardButton("Более 100000₽", callback_data="price_100000_999999999")],
-        [InlineKeyboardButton("Не важно", callback_data="price_any")],
+        [InlineKeyboardButton("До 35 000₽",   callback_data="price_upto_35000")],
+        [InlineKeyboardButton("До 65 000₽",   callback_data="price_35000_65000")],
+        [InlineKeyboardButton("До 100 000₽",  callback_data="price_50000_100000")],
+        [InlineKeyboardButton("Не важно",     callback_data="price_any")],
     ])
 
 
@@ -106,7 +104,6 @@ def get_main_keyboard():
         [KeyboardButton("▶️ Старт")],
         [KeyboardButton("📬 Подписаться")],
         [KeyboardButton("ℹ️ Моя подписка")],
-        [KeyboardButton("📝 Предложить своё")],
         [KeyboardButton("❌ Отписка")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -388,7 +385,6 @@ async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         "🏡 Бот подписки на объявления о недвижимости\n\n"
         "Выберите действие:\n\n"
-        "/offer - предложить свое обхявление,\n\n"
         "/subscribe - подписаться на обновления,\n\n"
         "/my_subscription - моя подписка,\n\n"
         "/unsubscribe - отписаться",

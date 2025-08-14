@@ -180,10 +180,18 @@ async def check_subscriptions_and_notify(info_instance):
 
 def is_ad_match_subscription(ad_data, subscription):
     """
-    Проверяет, подходит ли объявление под параметры подписки.
-    Учитывает:
-      - 0 комнат = студия (отсекается, если подписка >=1 комнаты)
-      - 0 м² = нераспознанная площадь (не используется для фильтрации)
+    Соответствие объявления подписке (под новые кнопки цены):
+      ЦЕНА:
+        1) "До 35 000₽"         -> min=None,  max=35000
+        2) "35–65 тыс. ₽"       -> min=35000, max=65000
+        3) "50–100 тыс. ₽"      -> min=50000, max=100000
+        4) "Не важно"           -> min=None,  max=None  (фильтр цены не применяется)
+
+      Другое:
+        - Комнаты: 0 -> 1 (студия = 1 комната)
+        - Площадь: сверяем только если > 0
+        - Район: игнорируем, если None/ 'ANY'
+        - Метро: объявление подходит, если расстояние <= лимита
     """
     try:
         ad_price = safe_parse_number(ad_data.get('price'))
@@ -191,37 +199,56 @@ def is_ad_match_subscription(ad_data, subscription):
         ad_flat_area = safe_parse_number(ad_data.get('count_meters_flat'))
         ad_metro_distance = safe_parse_number(ad_data.get('count_meters_metro'))
 
-        # Цена
-        if subscription.min_price and ad_price and ad_price < subscription.min_price:
-            return False
-        if subscription.max_price and ad_price and ad_price > subscription.max_price:
-            return False
+        # Студия как 1 комната
+        if ad_rooms == 0:
+            ad_rooms = 1
 
-        # Количество комнат
-        if subscription.min_rooms and ad_rooms is not None and int(ad_rooms) < subscription.min_rooms:
-            return False
-        if subscription.max_rooms and ad_rooms is not None and int(ad_rooms) > subscription.max_rooms:
-            return False
+        # ---------- ЦЕНА ----------
+        # Если выбрано "Не важно" -> min_price/max_price должны быть None
+        min_price = getattr(subscription, 'min_price', None)
+        max_price = getattr(subscription, 'max_price', None)
 
-        # Площадь проверяем только если она >0
-        if ad_flat_area and subscription.min_flat and ad_flat_area < subscription.min_flat:
-            return False
-        if ad_flat_area and subscription.max_flat and ad_flat_area > subscription.max_flat:
-            return False
+        if ad_price is not None:
+            if min_price is not None and ad_price < min_price:
+                return False
+            if max_price is not None and ad_price > max_price:
+                return False
+        # Если ad_price None — не валим объявление по цене, оставляем шанс другим фильтрам
 
-        # Район
-        if subscription.district != 'ANY' and ad_data.get('location') != subscription.district:
-            return False
+        # ---------- КОМНАТЫ ----------
+        if ad_rooms is not None:
+            if getattr(subscription, 'min_rooms', None) is not None and int(ad_rooms) < subscription.min_rooms:
+                return False
+            if getattr(subscription, 'max_rooms', None) is not None and int(ad_rooms) > subscription.max_rooms:
+                return False
 
-        # Метро
-        if ad_metro_distance and subscription.max_metro_distance and ad_metro_distance > subscription.max_metro_distance:
-            return False
+        # ---------- ПЛОЩАДЬ ----------
+        if ad_flat_area and ad_flat_area > 0:
+            if getattr(subscription, 'min_flat', None) is not None and ad_flat_area < subscription.min_flat:
+                return False
+            if getattr(subscription, 'max_flat', None) is not None and ad_flat_area > subscription.max_flat:
+                return False
+
+        # ---------- РАЙОН ----------
+        sub_district = getattr(subscription, 'district', None)
+        if sub_district not in (None, 'ANY'):
+            # Пример: в объявлении район хранится в ad_data['location']
+            if ad_data.get('location') != sub_district:
+                return False
+
+        # ---------- МЕТРО ----------
+        # Условие: объявление подходит, если фактическое расстояние <= максимального лимита подписки
+        max_metro = getattr(subscription, 'max_metro_distance', None)
+        if ad_metro_distance is not None and max_metro is not None:
+            if ad_metro_distance > max_metro:
+                return False
 
         return True
 
     except Exception as e:
         logger.error(f"Ошибка в фильтрации подписки: {e}", exc_info=True)
         return False
+
 
 def safe_parse_number(value):
     if value is None:

@@ -18,7 +18,7 @@ import django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 
-from main.models import Subscription
+from main.models import DEVSubscription
 
 import re
 
@@ -42,10 +42,12 @@ PRICE, ROOMS, FLAT_AREA, DISTRICT, METRO_DISTANCE, CONFIRM = range(6)
 # --- Клавиатуры ---
 def get_price_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("До 35 000₽",   callback_data="price_upto_35000")],
-        [InlineKeyboardButton("До 65 000₽",   callback_data="price_35000_65000")],
-        [InlineKeyboardButton("До 100 000₽",  callback_data="price_50000_100000")],
-        [InlineKeyboardButton("Не важно",     callback_data="price_any")],
+        [InlineKeyboardButton("До 35000₽", callback_data="price_0_35000")],
+        [InlineKeyboardButton("35000-45000₽", callback_data="price_35000_45000")],
+        [InlineKeyboardButton("45000-65000₽", callback_data="price_45000_65000")],
+        [InlineKeyboardButton("65000-100000₽", callback_data="price_65000_100000")],
+        [InlineKeyboardButton("Более 100000₽", callback_data="price_100000_999999999")],
+        [InlineKeyboardButton("Не важно", callback_data="price_any")],
     ])
 
 
@@ -104,6 +106,7 @@ def get_main_keyboard():
         [KeyboardButton("▶️ Старт")],
         [KeyboardButton("📬 Подписаться")],
         [KeyboardButton("ℹ️ Моя подписка")],
+        [KeyboardButton("📝 Предложить своё")],
         [KeyboardButton("❌ Отписка")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -215,7 +218,6 @@ async def offer_floor(update: Update, context: CallbackContext) -> int:
     context.user_data['floor'] = text
     await update.message.reply_text(f"Напишите условия (не более {TERMS_MAX_LEN} символов):")
     return O_TERMS
-
 
 async def offer_terms(update: Update, context: CallbackContext) -> int:
     text = (update.message.text or "").strip()
@@ -346,14 +348,14 @@ async def offer_cancel_cb(update: Update, context: CallbackContext) -> int:
 @sync_to_async
 def get_subscription(user_id):
     try:
-        return Subscription.objects.get(user_id=user_id)
-    except Subscription.DoesNotExist:
+        return DEVSubscription.objects.get(user_id=user_id)
+    except DEVSubscription.DoesNotExist:
         return None
 
 
 @sync_to_async
 def update_or_create_subscription(user_id, username, params):
-    return Subscription.objects.update_or_create(
+    return DEVSubscription.objects.update_or_create(
         user_id=user_id,
         defaults={
             'username': username,
@@ -373,11 +375,11 @@ def update_or_create_subscription(user_id, username, params):
 @sync_to_async
 def deactivate_subscription(user_id):
     try:
-        sub = Subscription.objects.get(user_id=user_id)
+        sub = DEVSubscription.objects.get(user_id=user_id)
         sub.is_active = False
         sub.save()
         return True
-    except Subscription.DoesNotExist:
+    except DEVSubscription.DoesNotExist:
         return False
 
 
@@ -386,6 +388,7 @@ async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         "🏡 Бот подписки на объявления о недвижимости\n\n"
         "Выберите действие:\n\n"
+        "/offer - предложить свое обхявление,\n\n"
         "/subscribe - подписаться на обновления,\n\n"
         "/my_subscription - моя подписка,\n\n"
         "/unsubscribe - отписаться",
@@ -484,7 +487,7 @@ async def process_metro(update: Update, context: CallbackContext) -> int:
         context.user_data['metro_close'] = False
 
     # Получаем человекочитаемое название округа
-    district_name = dict(Subscription.DISTRICT_CHOICES).get(
+    district_name = dict(DEVSubscription.DISTRICT_CHOICES).get(
         context.user_data.get('district'),
         'Не важно'
     )
@@ -552,7 +555,7 @@ async def cancel(update: Update, context: CallbackContext) -> int:
 async def my_subscription(update: Update, context: CallbackContext) -> None:
     sub = await get_subscription(update.effective_user.id)
     if sub:
-        district_name = dict(Subscription.DISTRICT_CHOICES).get(sub.district, 'Не важно')
+        district_name = dict(DEVSubscription.DISTRICT_CHOICES).get(sub.district, 'Не важно')
         metro_text = 'Близко' if getattr(sub, 'metro_close', False) else 'не важно'
 
         text = (
