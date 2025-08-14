@@ -583,7 +583,7 @@ async def unsubscribe(update: Update, context: CallbackContext) -> None:
 
 
 def main() -> None:
-    application = Application.builder().token(os.getenv("DEV_BOT_TOKEN_SUB")).build()
+    application = Application.builder().token(os.getenv("TOKEN3")).build()
 
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📬 Подписаться$"), subscribe)],
