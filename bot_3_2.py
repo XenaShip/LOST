@@ -38,16 +38,17 @@ logger = logging.getLogger(__name__)
 # Состояния диалога
 PRICE, ROOMS, FLAT_AREA, DISTRICT, METRO_DISTANCE, CONFIRM = range(6)
 (O_PRICE, O_ADDRESS, O_ROOMS, O_AREA, O_FLOOR, O_TERMS, O_DESC, O_CONTACTS, O_PHOTOS, O_PREVIEW) = range(100, 110)
+O_EDIT = 110
 
 # --- Клавиатуры ---
 def get_price_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("До 35 000₽",   callback_data="price_upto_35000")],
-        [InlineKeyboardButton("До 65 000₽",   callback_data="price_35000_65000")],
-        [InlineKeyboardButton("До 100 000₽",  callback_data="price_50000_100000")],
-        [InlineKeyboardButton("Не важно",     callback_data="price_any")],
+        [InlineKeyboardButton("До 35.000р",    callback_data="price_to_35000")],
+        [InlineKeyboardButton("До 65.000р",    callback_data="price_to_65000")],
+        [InlineKeyboardButton("До 100.000р",   callback_data="price_to_100000")],
+        [InlineKeyboardButton("Более 100.000р", callback_data="price_over_100000")],
+        [InlineKeyboardButton("Не важно",       callback_data="price_any")],
     ])
-
 
 def get_rooms_keyboard():
     return InlineKeyboardMarkup([
@@ -104,6 +105,7 @@ def get_main_keyboard():
         [KeyboardButton("▶️ Старт")],
         [KeyboardButton("📬 Подписаться")],
         [KeyboardButton("ℹ️ Моя подписка")],
+        [KeyboardButton("📝 Предложить своё")],
         [KeyboardButton("❌ Отписка")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -122,7 +124,6 @@ def get_offer_rooms_keyboard():
 def get_offer_photos_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Готово", callback_data="offer_photos_done")],
-        [InlineKeyboardButton("⏭ Пропустить", callback_data="offer_photos_skip")],
     ])
 
 def _digits(text: str) -> str:
@@ -140,8 +141,8 @@ def _is_valid_contact(s: str) -> bool:
         return True
     return False
 
+
 def build_offer_text(d: dict) -> str:
-    # Плоский текст без Markdown — в канале модерации будет читабельно и безопасно
     parts = []
     parts.append(f"💰 Цена: {d['price']} ₽")
     parts.append(f"📍 Адрес: {d['address']}")
@@ -150,16 +151,47 @@ def build_offer_text(d: dict) -> str:
     parts.append(f"🏢 Этаж: {d['floor']}")
     parts.append(f"⚙️ Условия: {d['terms']}")
     parts.append(f"📝 Описание: {d['desc']}")
-    parts.append(f"🔗 Контакты: {d['contacts']}")
     author = d.get('author', '')
     if author:
-        parts.append(f"👤 Автор: {author}")
+        parts.append(f"👤 Контакты: {author}")
     return "\n".join(parts)
+
+
+async def show_offer_preview(update: Update, context: CallbackContext, edit_via="edit") -> int:
+    preview = build_offer_text(context.user_data) + f"\n🖼 Фото: {len(context.user_data.get('photos', []))} шт."
+    if edit_via == "edit":
+        q = update.callback_query
+        await q.edit_message_text("Проверьте, пожалуйста, данные:\n\n" + preview,
+                                  reply_markup=build_offer_preview_kb())
+    else:
+        await update.message.reply_text("Проверьте, пожалуйста, данные:\n\n" + preview,
+                                        reply_markup=build_offer_preview_kb())
+    return O_PREVIEW
+
+
+
+def build_offer_preview_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏ Цена", callback_data="offer_edit_price"),
+         InlineKeyboardButton("✏ Адрес", callback_data="offer_edit_address")],
+        [InlineKeyboardButton("✏ Комнаты", callback_data="offer_edit_rooms"),
+         InlineKeyboardButton("✏ Площадь", callback_data="offer_edit_area")],
+        [InlineKeyboardButton("✏ Этаж", callback_data="offer_edit_floor"),
+         InlineKeyboardButton("✏ Условия", callback_data="offer_edit_terms")],
+        [InlineKeyboardButton("✏ Описание", callback_data="offer_edit_desc")],
+        [InlineKeyboardButton("🖼 Фото (изменить)", callback_data="offer_edit_photos")],
+        [InlineKeyboardButton("✅ Опубликовать", callback_data="offer_publish"),
+         InlineKeyboardButton("❌ Отменить", callback_data="offer_cancel")],
+    ])
 
 async def offer_start(update: Update, context: CallbackContext) -> int:
     context.user_data.clear()
     await update.message.reply_text(
-        "Укажите цену (числом, без текста, например: 65000):",
+        "Укажите цену (в ₽), например: 65000"
+    "\n\n"
+    "----------------"
+    "\n"
+    "⚠️Не переживайте, если ошиблись при заполнении анкеты, перед публикацией ее можно будет отредактировать!",
         reply_markup=get_main_keyboard()
     )
     return O_PRICE
@@ -182,6 +214,7 @@ async def offer_address(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Выберите тип/кол-во комнат:", reply_markup=get_offer_rooms_keyboard())
     return O_ROOMS
 
+
 async def offer_rooms_cb(update: Update, context: CallbackContext) -> int:
     q = update.callback_query
     await q.answer()
@@ -195,8 +228,17 @@ async def offer_rooms_cb(update: Update, context: CallbackContext) -> int:
         "offer_rooms_4plus":  "4+",
     }
     context.user_data['rooms'] = mapping.get(data, "—")
+
+    # Если мы пришли сюда через редактирование — вернёмся к предпросмотру
+    if context.user_data.get('edit_field') == 'rooms':
+        context.user_data.pop('edit_field', None)
+        # покажем предпросмотр в этом же сообщении
+        return await show_offer_preview(update, context, edit_via="edit")
+
+    # Иначе продолжаем обычный поток заполнения
     await q.edit_message_text("Укажите площадь (м²), например: 42")
     return O_AREA
+
 
 async def offer_area(update: Update, context: CallbackContext) -> int:
     val = _digits(update.message.text)
@@ -213,9 +255,12 @@ async def offer_floor(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text("Введите этаж, например: 5 или 5 из 17")
         return O_FLOOR
     context.user_data['floor'] = text
-    await update.message.reply_text(f"Напишите условия (не более {TERMS_MAX_LEN} символов):")
+    await update.message.reply_text(f"Введите условия (до {TERMS_MAX_LEN} символов)"
+    "\n\n"
+    "----------------"
+    "\n"
+    "⚠️Не переживайте, если ошиблись при заполнении анкеты, перед публикацией ее можно будет отредактировать!")
     return O_TERMS
-
 
 async def offer_terms(update: Update, context: CallbackContext) -> int:
     text = (update.message.text or "").strip()
@@ -223,7 +268,13 @@ async def offer_terms(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text(f"Слишком длинно. Сократите до {TERMS_MAX_LEN} символов.")
         return O_TERMS
     context.user_data['terms'] = text or "—"
-    await update.message.reply_text(f"Опишите квартиру (не более {DESC_MAX_LEN} символов):")
+    await update.message.reply_text(
+        f"Введите описание (до {DESC_MAX_LEN} символов)"
+        "\n\n"
+        "----------------"
+        "\n"
+        "⚠️Не переживайте, если ошиблись при заполнении анкеты, перед публикацией ее можно будет отредактировать!"
+    )
     return O_DESC
 
 async def offer_desc(update: Update, context: CallbackContext) -> int:
@@ -232,25 +283,17 @@ async def offer_desc(update: Update, context: CallbackContext) -> int:
         await update.message.reply_text(f"Слишком длинно. Сократите до {DESC_MAX_LEN} символов.")
         return O_DESC
     context.user_data['desc'] = text or "—"
-    await update.message.reply_text("Укажите ваши контакты (ссылка на тг, @username, tg://user?id=..., или номер телефона):")
-    return O_CONTACTS
 
-async def offer_contacts(update: Update, context: CallbackContext) -> int:
-    text = (update.message.text or "").strip()
-    if not _is_valid_contact(text):
-        await update.message.reply_text("Не похоже на контакт. Пример: @username или https://t.me/username или +79991234567")
-        return O_CONTACTS
-    context.user_data['contacts'] = text
-
+    # Автор — из Telegram-профиля
     user = update.effective_user
     context.user_data['author'] = f"@{user.username}" if user and user.username else f"id:{user.id if user else '-'}"
 
-    # подготовим корзину для фото
+    # Подготовка к фото
     context.user_data['photos'] = []
 
     await update.message.reply_text(
-        "Прикрепите до 10 фотографий (можно альбомом или по одной). "
-        "Когда закончите — нажмите «Готово», либо «Пропустить».",
+        "Прикрепите минимум 1 и до 10 фотографий (можно альбомом или по одной). "
+        "Когда закончите — нажмите «Готово».",
         reply_markup=get_offer_photos_keyboard()
     )
     return O_PHOTOS
@@ -283,21 +326,133 @@ async def offer_photos(update: Update, context: CallbackContext) -> int:
 async def offer_photos_done(update: Update, context: CallbackContext) -> int:
     q = update.callback_query
     await q.answer()
-    preview = build_offer_text(context.user_data) + f"\n🖼 Фото: {len(context.user_data.get('photos', []))} шт."
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Опубликовать", callback_data="offer_publish"),
-        InlineKeyboardButton("❌ Отменить", callback_data="offer_cancel"),
-    ]])
-    await q.edit_message_text("Проверьте, пожалуйста, данные:\n\n" + preview, reply_markup=kb)
-    return O_PREVIEW
+    photos = context.user_data.get('photos', [])
+    if not photos:
+        await q.edit_message_text(
+            "Нужно минимум одно фото. Прикрепите фото и нажмите «Готово».",
+            reply_markup=get_offer_photos_keyboard()
+        )
+        return O_PHOTOS
+    return await show_offer_preview(update, context, edit_via="edit")
+
 
 async def offer_photos_skip(update: Update, context: CallbackContext) -> int:
     q = update.callback_query
     await q.answer()
-    context.user_data['photos'] = []
-    return await offer_photos_done(update, context)
+    await q.edit_message_text(
+        "Пропустить нельзя — нужно минимум одно фото. "
+        "Прикрепите фото и нажмите «Готово».",
+        reply_markup=get_offer_photos_keyboard()
+    )
+    return O_PHOTOS
+
+
+async def offer_edit_router(update: Update, context: CallbackContext) -> int:
+    q = update.callback_query
+    await q.answer()
+    action = q.data  # ожидаем offer_edit_*
+    # запомним «какое поле правим» (нужно для offer_edit_input)
+    field = action.replace("offer_edit_", "")
+    context.user_data['edit_field'] = field
+
+    # Особый случай: фото — возвращаем на шаг добавления фото
+    if field == "photos":
+        await q.edit_message_text(
+            "Прикрепите минимум 1 и до 10 фотографий (можно альбомом или по одной). "
+            "Когда закончите — нажмите «Готово».",
+            reply_markup=get_offer_photos_keyboard()
+        )
+        return O_PHOTOS
+
+    # Особый случай: комнаты — показываем твою клавиатуру выбора комнат
+    if field == "rooms":
+        await q.edit_message_text("Выберите тип/кол-во комнат:", reply_markup=get_offer_rooms_keyboard())
+        return O_ROOMS  # у тебя уже есть обработчик offer_rooms_cb
+
+    # Для остальных полей просим ввести новое значение текстом
+    prompts = {
+        "price":    "Введите новую цену (числом), например: 65000",
+        "address":  "Введите адрес",
+        "area":     "Введите площадь (м²), например: 42",
+        "floor":    "Введите этаж (например: 5 или 5 из 17)",
+        "terms":    f"Введите новые условия (до {TERMS_MAX_LEN} символов)",
+        "desc":     f"Введите новое описание (до {DESC_MAX_LEN} символов)",
+    }
+
+    await q.edit_message_text(prompts.get(field, "Введите новое значение:"))
+    return O_EDIT  # ← ждём текст от пользователя
+
+
+async def offer_edit_input(update: Update, context: CallbackContext) -> int:
+    field = context.user_data.get('edit_field')
+    text = (update.message.text or "").strip()
+
+    # Цена
+    if field == "price":
+        val = _digits(text)  # у тебя уже есть такой хелпер; если нет — вытащи цифры через re
+        if not val:
+            await update.message.reply_text("Не получилось распознать число. Введите цену, например: 65000")
+            return O_EDIT
+        context.user_data['price'] = int(val)
+
+    # Адрес
+    elif field == "address":
+        if len(text) < 5:
+            await update.message.reply_text("Слишком короткий адрес. Уточните, пожалуйста.")
+            return O_EDIT
+        context.user_data['address'] = text
+
+    # Площадь
+    elif field == "area":
+        val = _digits(text)
+        if not val:
+            await update.message.reply_text("Введите число, например: 42")
+            return O_EDIT
+        context.user_data['area'] = int(val)
+
+    # Этаж
+    elif field == "floor":
+        if not text:
+            await update.message.reply_text("Введите этаж, например: 5 или 5 из 17")
+            return O_EDIT
+        context.user_data['floor'] = text
+
+    # Условия
+    elif field == "terms":
+        if len(text) > TERMS_MAX_LEN:
+            await update.message.reply_text(f"Слишком длинно. Сократите до {TERMS_MAX_LEN} символов.")
+            return O_EDIT
+        context.user_data['terms'] = text or "—"
+
+    # Описание
+    elif field == "desc":
+        if len(text) > DESC_MAX_LEN:
+            await update.message.reply_text(f"Слишком длинно. Сократите до {DESC_MAX_LEN} символов.")
+            return O_EDIT
+        context.user_data['desc'] = text or "—"
+    # Неизвестное поле (на всякий случай)
+    else:
+        await update.message.reply_text("Неизвестное поле. Вернёмся к предпросмотру.")
+        return await show_offer_preview(update, context, edit_via="send")
+
+    # Очистим маркер редактирования и вернёмся к предпросмотру
+    context.user_data.pop('edit_field', None)
+    return await show_offer_preview(update, context, edit_via="send")
+
+
 
 async def offer_publish(update: Update, context: CallbackContext) -> int:
+    q = update.callback_query
+    await q.answer()
+
+    photos = context.user_data.get('photos', [])
+    if not photos:
+        await q.edit_message_text(
+            "Чтобы опубликовать, добавьте хотя бы одно фото. "
+            "Прикрепите фото и нажмите «Готово».",
+            reply_markup=get_offer_photos_keyboard()
+        )
+        return O_PHOTOS
     q = update.callback_query
     await q.answer()
     text = build_offer_text(context.user_data)
@@ -308,9 +463,7 @@ async def offer_publish(update: Update, context: CallbackContext) -> int:
         return ConversationHandler.END
 
     try:
-        # 1) текст
-        await context.bot.send_message(chat_id=MODERATION_CHANNEL_ID, text="🆕 Новое предложение на модерацию:\n\n" + text)
-        # 2) фото (если есть)
+        await context.bot.send_message(chat_id=MODERATION_CHANNEL_ID, text=text)
         photos = context.user_data.get('photos', [])[:10]
         if photos:
             media = [InputMediaPhoto(media=pid) for pid in photos]
@@ -386,6 +539,7 @@ async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         "🏡 Бот подписки на объявления о недвижимости\n\n"
         "Выберите действие:\n\n"
+        "/offer - предложить свое объявление,\n\n"
         "/subscribe - подписаться на обновления,\n\n"
         "/my_subscription - моя подписка,\n\n"
         "/unsubscribe - отписаться",
@@ -406,15 +560,39 @@ async def process_price(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
 
-    data = query.data.split('_')
-    if data[1] == 'any':
+    cb = query.data
+    if cb == "price_any":
         context.user_data['min_price'] = None
         context.user_data['max_price'] = None
+    elif cb == "price_to_35000":
+        context.user_data['min_price'] = 0
+        context.user_data['max_price'] = 35000
+    elif cb == "price_to_65000":
+        context.user_data['min_price'] = 35000
+        context.user_data['max_price'] = 65000
+    elif cb == "price_to_100000":
+        context.user_data['min_price'] = 50000
+        context.user_data['max_price'] = 100000
+    elif cb == "price_over_100000":
+        context.user_data['min_price'] = 100000
+        context.user_data['max_price'] = None
     else:
-        context.user_data['min_price'] = int(data[1])
-        context.user_data['max_price'] = int(data[2])
+        parts = cb.split('_')
+        if len(parts) == 3:
+            context.user_data['min_price'] = int(parts[1]) if parts[1] != 'any' else None
+            context.user_data['max_price'] = int(parts[2]) if parts[2] != 'any' else None
+        else:
+            context.user_data['min_price'] = None
+            context.user_data['max_price'] = None
 
-    await query.edit_message_text(
+    # Снимем клавиатуру у сообщения с ценами (на случай повторных нажатий)
+    try:
+        await query.edit_message_reply_markup(None)
+    except Exception:
+        pass
+
+    # Отправим НОВОЕ сообщение с выбором комнат
+    await query.message.reply_text(
         "🚪 Выберите количество комнат:",
         reply_markup=get_rooms_keyboard()
     )
@@ -488,12 +666,20 @@ async def process_metro(update: Update, context: CallbackContext) -> int:
         context.user_data.get('district'),
         'Не важно'
     )
-
+    min_p = context.user_data.get('min_price')
+    max_p = context.user_data.get('max_price')
+    if min_p is None and max_p is None:
+        price_text = "не важно"
+    elif min_p is None:
+        price_text = f"до {max_p} ₽"
+    elif max_p is None:
+        price_text = f"от {min_p} ₽"
+    else:
+        price_text = f"{min_p}-{max_p} ₽"
     # Формируем текст сводки
     summary = (
         "✅ Проверьте параметры подписки:\n\n"
-        f"• Цена: {context.user_data.get('min_price', 'не важно')} - "
-        f"{context.user_data.get('max_price', 'не важно')} ₽\n"
+        f"• Цена: {price_text}\n"
         f"• Комнат: {context.user_data.get('min_rooms', 'не важно')}-"
         f"{context.user_data.get('max_rooms', 'не важно')}\n"
         f"• Площадь: {context.user_data.get('min_flat', 'не важно')}-"
@@ -584,7 +770,6 @@ async def unsubscribe(update: Update, context: CallbackContext) -> None:
 
 def main() -> None:
     application = Application.builder().token(os.getenv("TOKEN3")).build()
-
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^📬 Подписаться$"), subscribe)],
         states={
@@ -604,7 +789,7 @@ def main() -> None:
     offer_conv = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex("^📝 Предложить своё$"), offer_start),
-            CommandHandler("offer", offer_start),  # ← новое: /offer
+            CommandHandler("offer", offer_start),
         ],
         states={
             O_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, offer_price)],
@@ -614,16 +799,21 @@ def main() -> None:
             O_FLOOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, offer_floor)],
             O_TERMS: [MessageHandler(filters.TEXT & ~filters.COMMAND, offer_terms)],
             O_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, offer_desc)],
-            O_CONTACTS: [MessageHandler(filters.TEXT & ~filters.COMMAND, offer_contacts)],
 
-            # НОВОЕ: шаг с фотографиями
             O_PHOTOS: [
                 MessageHandler(filters.PHOTO, offer_photos),
                 CallbackQueryHandler(offer_photos_done, pattern="^offer_photos_done$"),
                 CallbackQueryHandler(offer_photos_skip, pattern="^offer_photos_skip$"),
             ],
 
+            # 🆕 Новое состояние для текстового редактирования
+            O_EDIT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, offer_edit_input),
+            ],
+
             O_PREVIEW: [
+                # 🆕 Новая обработка кнопок «✏ ...»
+                CallbackQueryHandler(offer_edit_router, pattern="^offer_edit_"),
                 CallbackQueryHandler(offer_publish, pattern="^offer_publish$"),
                 CallbackQueryHandler(offer_cancel_cb, pattern="^offer_cancel$"),
             ],
