@@ -32,7 +32,7 @@ from make_info import process_text_with_gpt_adress, process_text_with_gpt_price,
     process_text_with_gpt_rooms
 from meters import find_nearest_metro
 from proccess import process_text_with_gpt2, process_text_with_gpt
-
+METRO_CLOSE_MAX_METERS = int(os.getenv("METRO_CLOSE_MAX_METERS", "1200"))
 # Настроим Django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
