@@ -43,11 +43,11 @@ O_EDIT = 110
 # --- Клавиатуры ---
 def get_price_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("До 35.000р",    callback_data="price_to_35000")],
-        [InlineKeyboardButton("До 65.000р",    callback_data="price_to_65000")],
-        [InlineKeyboardButton("До 100.000р",   callback_data="price_to_100000")],
-        [InlineKeyboardButton("Более 100.000р", callback_data="price_over_100000")],
-        [InlineKeyboardButton("Не важно",       callback_data="price_any")],
+        [InlineKeyboardButton("До 35.000р",     callback_data="price_0_35000")],
+        [InlineKeyboardButton("До 65.000р",     callback_data="price_35000_65000")],
+        [InlineKeyboardButton("До 100.000р",    callback_data="price_50000_100000")],
+        [InlineKeyboardButton("Более 100.000р", callback_data="price_100000_any")],
+        [InlineKeyboardButton("Не важно",       callback_data="price_any_any")],
     ])
 
 def get_rooms_keyboard():
@@ -561,7 +561,16 @@ async def process_price(update: Update, context: CallbackContext) -> int:
     await query.answer()
 
     cb = query.data
-    if cb == "price_any":
+    logger.info(f"[price] callback_data={cb}")
+
+    # 1) Новый формат: price_<min>_<max>, где any означает None
+    m = re.match(r"^price_(any|\d+)_(any|\d+)$", cb)
+    if m:
+        def _p(x): return None if x == "any" else int(x)
+        context.user_data['min_price'] = _p(m.group(1))
+        context.user_data['max_price'] = _p(m.group(2))
+    # 2) Старый формат: price_to_35000 / price_to_65000 / price_to_100000 / price_over_100000 / price_any
+    elif cb == "price_any":
         context.user_data['min_price'] = None
         context.user_data['max_price'] = None
     elif cb == "price_to_35000":
@@ -577,21 +586,20 @@ async def process_price(update: Update, context: CallbackContext) -> int:
         context.user_data['min_price'] = 100000
         context.user_data['max_price'] = None
     else:
-        parts = cb.split('_')
-        if len(parts) == 3:
-            context.user_data['min_price'] = int(parts[1]) if parts[1] != 'any' else None
-            context.user_data['max_price'] = int(parts[2]) if parts[2] != 'any' else None
-        else:
-            context.user_data['min_price'] = None
-            context.user_data['max_price'] = None
+        # Непонятный колбэк — попросим выбрать снова
+        await query.edit_message_text(
+            "Не удалось определить диапазон. Выберите из списка:",
+            reply_markup=get_price_keyboard()
+        )
+        return PRICE
 
-    # Снимем клавиатуру у сообщения с ценами (на случай повторных нажатий)
+    # Снимем клавиатуру у сообщения с ценами (на случай повторных тапов)
     try:
         await query.edit_message_reply_markup(None)
     except Exception:
         pass
 
-    # Отправим НОВОЕ сообщение с выбором комнат
+    # Переходим к выбору комнат НОВЫМ сообщением (стабильнее, чем edit_message_text)
     await query.message.reply_text(
         "🚪 Выберите количество комнат:",
         reply_markup=get_rooms_keyboard()
@@ -771,7 +779,10 @@ async def unsubscribe(update: Update, context: CallbackContext) -> None:
 def main() -> None:
     application = Application.builder().token(os.getenv("TOKEN3")).build()
     conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📬 Подписаться$"), subscribe)],
+        entry_points=[
+            MessageHandler(filters.Regex("^📬 Подписаться$"), subscribe),
+            CommandHandler("subscribe", subscribe),
+        ],
         states={
             PRICE: [CallbackQueryHandler(process_price, pattern="^price_")],
             ROOMS: [CallbackQueryHandler(process_rooms, pattern="^rooms_")],
@@ -832,7 +843,6 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.Regex("^ℹ️ Моя подписка$"), my_subscription))
     application.add_handler(MessageHandler(filters.Regex("^❌ Отписка$"), unsubscribe))
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("subscribe", subscribe))
     application.add_handler(CommandHandler("my_subscription", my_subscription))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe))
     application.run_polling(allowed_updates=Update.ALL_TYPES)
