@@ -32,6 +32,7 @@ from proccess import process_text_with_gpt2, process_text_with_gpt3, process_tex
 # Загружаем переменные окружения
 load_dotenv()
 
+TG_ID_RE = re.compile(r"tg://user\?id=(\d+)")
 # Настроить Django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
@@ -57,36 +58,48 @@ METRO_CLOSE_MAX_METERS = int(os.getenv("METRO_CLOSE_MAX_METERS", "1200"))
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 YANDEX_GPT_API_KEY = os.getenv("YANDEX_GPT_API_KEY")
 DOWNLOAD_FOLDER = "downloads/"
-
 # Инициализация клиента Telethon
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH, system_version='1.2.3-zxc-custom',
                         device_model='aboba-linux-custom', app_version='1.0.1')
 
 
-async def get_username_by_id(user_id):
+async def get_username_by_id(user_id: int | str) -> str | None:
+    """
+    Возвращает публичный @username по числовому user_id.
+    Если у человека нет публичного ника — вернёт None.
+    """
     try:
-        # Преобразуем ID в целое число
-        user_id = int(user_id)
-        # Получаем информацию о пользователе
-        user = await client.get_entity(user_id)
-        if user.username:
-            return f"https://t.me/{user.username}"
+        user = await client.get_entity(int(user_id))
+        uname = getattr(user, "username", None)
+        return f"@{uname}" if uname else None
     except Exception as e:
         logger.error(f"Ошибка получения username: {e}")
-    return None  # Если не удалось получить username
+        return None
 
 
-async def process_contacts(text):
-    # Получаем контакт через GPT
-    raw_contact = await asyncio.to_thread(process_text_with_gpt2, text)
-    print('process')
+async def process_contacts(text: str) -> str | None:
+    """
+    Пытается достать @username из текста объявления.
+    Возвращает:
+      - '@username' — если получилось,
+      - None — если контакта нет или нет публичного ника.
+    """
+    # 2.1. Попросим вашу GPT-функцию вычленить «контакт» из текста
+    raw = await asyncio.to_thread(process_text_with_gpt2, text)
+    raw = (raw or "").strip()
 
-    # Если это tg:// ссылка - преобразуем
-    if raw_contact.startswith("tg://user?id="):
-        user_id = raw_contact.split("=")[1]
-        return await get_username_by_id(user_id) or raw_contact
+    # 2.2. Ищем tg://user?id=... в любом месте строки (в т.ч. внутри Markdown-ссылки)
+    m = TG_ID_RE.search(raw)
+    if m:
+        user_id = m.group(1)
+        return await get_username_by_id(user_id)  # вернёт @username или None
 
-    return raw_contact
+    # 2.3. Если уже готовый @username — принимаем
+    if raw.startswith("@") and " " not in raw:
+        return raw
+
+    # 2.4. Любые телефоны/«нет»/другое — не считаем валидным контактом
+    return None
 
 
 async def download_media(message):
@@ -413,6 +426,10 @@ async def new_message_handler(event):
         media_items = await download_media(event.message)
 
         contacts = await process_contacts(text)
+        if not contacts:
+            logger.info("Контакт не извлечён — объявление пропускаем.")
+            return
+
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
         new_text = new_text.replace("*", "\n")
@@ -513,8 +530,8 @@ async def main():
                 await client.sign_in(password=password)
 
         CHANNEL_USERNAMES = [
-            "keystomoscow","arendamsc","onmojetprogat","loltestneedxenaship",
-            "arendamsk_mo","lvngrm_msk","Sdat_Kvartiru0","bestflats_msk","nebabushkin_msk",
+            "keystomoscow", "arendamsc", "onmojetprogat", "loltestneedxenaship",
+            "arendamsk_mo", "lvngrm_msk", "Sdat_Kvartiru0", "bestflats_msk", "nebabushkin_msk",
         ]
         try:
             channel_entities = await asyncio.gather(
