@@ -31,13 +31,11 @@ from proccess import process_text_with_gpt2, process_text_with_gpt3, process_tex
 
 # Загружаем переменные окружения
 load_dotenv()
-
-TG_ID_RE = re.compile(r"tg://user\?id=(\d+)")
 # Настроить Django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
-from main.models import MESSAGE, INFO, Subscription  # Используем новую модель
+from main.models import  DEVMESSAGE, DEVINFO, DEVSubscription  # Используем новую модель
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
@@ -63,44 +61,26 @@ DOWNLOAD_FOLDER = "downloads/"
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH, system_version='1.2.3-zxc-custom',
                         device_model='aboba-linux-custom', app_version='1.0.1')
 
-
-async def get_username_by_id(user_id: int | str) -> str | None:
-    """
-    Возвращает публичный @username по числовому user_id.
-    Если у человека нет публичного ника — вернёт None.
-    """
+async def get_username_by_id(user_id):
     try:
-        user = await client.get_entity(int(user_id))
-        uname = getattr(user, "username", None)
-        return f"@{uname}" if uname else None
+        # Преобразуем ID в целое число
+        user_id = int(user_id)
+        # Получаем информацию о пользователе
+        user = await client.get_entity(user_id)
+        if user.username:
+            return f"https://t.me/{user.username}"
     except Exception as e:
         logger.error(f"Ошибка получения username: {e}")
-        return None
+    return None  # Если не удалось получить username
 
 
 async def process_contacts(text: str) -> str | None:
-    """
-    Пытается достать @username из текста объявления.
-    Возвращает:
-      - '@username' — если получилось,
-      - None — если контакта нет или нет публичного ника.
-    """
-    # 2.1. Попросим вашу GPT-функцию вычленить «контакт» из текста
-    raw = await asyncio.to_thread(process_text_with_gpt2, text)
-    raw = (raw or "").strip()
-
-    # 2.2. Ищем tg://user?id=... в любом месте строки (в т.ч. внутри Markdown-ссылки)
-    m = TG_ID_RE.search(raw)
-    if m:
-        user_id = m.group(1)
-        return await get_username_by_id(user_id)  # вернёт @username или None
-
-    # 2.3. Если уже готовый @username — принимаем
-    if raw.startswith("@") and " " not in raw:
-        return raw
-
-    # 2.4. Любые телефоны/«нет»/другое — не считаем валидным контактом
-    return None
+    raw_contact = await asyncio.to_thread(process_text_with_gpt2, text)
+    print('process')
+    if raw_contact.startswith("tg://user?id="):
+        user_id = raw_contact.split("=")[1]
+        return await get_username_by_id(user_id) or raw_contact
+    return raw_contact
 
 
 async def download_media(message):
@@ -223,7 +203,7 @@ async def download_images(message):
 async def check_subscriptions_and_notify(info_instance, contacts):
     logger.info(f"🔔 Начало обработки подписок для объявления {info_instance.id}")
     # Получаем все активные подписки
-    subscriptions = await sync_to_async(list)(Subscription.objects.filter(is_active=True))
+    subscriptions = await sync_to_async(list)(DEVSubscription.objects.filter(is_active=True))
     logger.info(f"📋 Найдено {len(subscriptions)} активных подписок")
     if not subscriptions:
         logger.info("❌ Нет активных подписок, пропускаем уведомления")
@@ -421,16 +401,25 @@ async def new_message_handler(event):
                 logger.info('Skip: album already processed')
                 return
             processed_group_ids.add(key_album)
-        # БЫЛО: text = event.message.text or ""
-        text = await extract_text_from_event(event)  # <-- КЛЮЧЕВАЯ ПРАВКА
-
+        text = await extract_text_from_event(event)
         media_items = await download_media(event.message)
-
         contacts = await process_contacts(text)
-        if not contacts:
-            logger.info("Контакт не извлечён — объявление пропускаем.")
-            return
+        if contacts and contacts.startswith("tg://user?id="):
+            try:
+                user_id = contacts.split("=", 1)[1]
+            except Exception:
+                user_id = None
 
+            if user_id:
+                fixed = await get_username_by_id(user_id)
+                if fixed:
+                    contacts = fixed  # заменяем на читабельный @username/ссылку
+                else:
+                    logger.info("Пропуск: контакт tg://… не удалось преобразовать повторно.")
+                    return  # не отправляем это уведомление/пост
+            else:
+                logger.info("Пропуск: некорректный формат tg://user?id=…")
+                return
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
         new_text = new_text.replace("*", "\n")
@@ -443,7 +432,7 @@ async def new_message_handler(event):
         print(new_text)
 
         # Сохраняем сообщение в базу данных
-        message = await sync_to_async(MESSAGE.objects.create)(
+        message = await sync_to_async(DEVMESSAGE.objects.create)(
             text=text,
             images=[item['path'] for item in media_items] if media_items else None,
             new_text=new_text
@@ -466,7 +455,7 @@ async def new_message_handler(event):
 
             flat_area = parse_flat_area(process_text_with_gpt_sq(new_text))
 
-            info = await sync_to_async(INFO.objects.create)(
+            info = await sync_to_async(DEVINFO.objects.create)(
                 message=message,
                 price=process_text_with_gpt_price(new_text),
                 count_meters_flat=flat_area,
@@ -498,27 +487,9 @@ def _is_yes(s: str | None) -> bool:
 def _is_no(s: str | None) -> bool:
     return bool(s) and re.match(r'^(нет|no|n|false)\b', s.strip(), flags=re.I)
 
-def check_running():
-    pid_file = "bot.pid"
-    if os.path.exists(pid_file):
-        with open(pid_file, "r") as f:
-            old_pid = f.read()
-        if os.path.exists(f"/proc/{old_pid}"):  # Для Linux
-            print("Already running!")
-            sys.exit(1)
-        # Для Windows (альтернатива):
-        try:
-            os.kill(int(old_pid), 0)  # Проверяем, жив ли процесс
-            sys.exit(1)
-        except (ProcessLookupError, ValueError):
-            pass  # Процесс умер, можно продолжать
-
-    with open(pid_file, "w") as f:
-        f.write(str(os.getpid()))
 
 
 async def main():
-    check_running()
     try:
         await client.connect()
         if not await client.is_user_authorized():
