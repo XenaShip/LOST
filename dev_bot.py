@@ -1,28 +1,15 @@
-import os
 import asyncio
-import random
 import logging
 import re
-import time
-from datetime import datetime
 from telegram import InputMediaVideo
 import telethon
 import django
-import requests
-from anyio import current_time
-from django.utils.regex_helper import contains
 from telegram import Bot, InputMediaPhoto
 from telegram.error import RetryAfter, BadRequest
 from telethon import TelegramClient, events
 from dotenv import load_dotenv
 from asgiref.sync import sync_to_async
-from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
-from yandex_cloud_ml_sdk import YCloudML
-import sys
 import os
-
-from bot_cian import message_handler, save_message_to_db
 from district import get_district_by_coords, get_coords_by_address
 from make_info import process_text_with_gpt_price, process_text_with_gpt_sq, process_text_with_gpt_adress, \
     process_text_with_gpt_rooms
@@ -207,49 +194,6 @@ async def send_media_group(bot, chat_id, text, media_items, parse_mode: str = "H
                 f.close()
             except Exception:
                 pass
-
-
-async def send_images_with_text(bot, chat_id, text, images):
-    """Отправляет все изображения в Telegram, первое с текстом, остальные без."""
-    media_group = []
-    open_files = []  # Список открытых файлов, чтобы их не закрыл `with open`
-
-    for index, image_path in enumerate(images):
-        if os.path.exists(image_path):
-            img_file = open(image_path, "rb")  # Открываем файл и сохраняем
-            open_files.append(img_file)  # Добавляем в список, чтобы не закрылся
-
-            if index == 0:
-                media_group.append(InputMediaPhoto(media=img_file, caption=text))
-            else:
-                media_group.append(InputMediaPhoto(media=img_file))
-
-    if media_group:
-        await bot.send_media_group(chat_id=chat_id, media=media_group)
-
-    # Закрываем файлы после отправки
-    for img_file in open_files:
-        img_file.close()
-
-
-async def download_images(message):
-    """Скачивает все фото из сообщения (включая альбом)"""
-    images = []  # Список путей загруженных фото
-
-    # 1️⃣ Проверяем, является ли сообщение частью альбома
-    if message.grouped_id:
-        # Получаем ВСЕ сообщения с таким же `grouped_id`
-        album_messages = await client.get_messages(message.chat_id, min_id=message.id - 10, max_id=message.id + 10)
-        photos = [msg.photo for msg in album_messages if msg.photo]  # Оставляем только фото
-    else:
-        # Если одиночное фото — обрабатываем только текущее сообщение
-        photos = [message.photo] if message.photo else []
-
-    # 2️⃣ Скачиваем фото
-    for photo in photos:
-        file_path = await client.download_media(photo, DOWNLOAD_FOLDER)
-        if file_path:
-            images.append(file_path)
 
 
 async def check_subscriptions_and_notify(info_instance, contacts):
@@ -544,8 +488,6 @@ async def new_message_handler(event):
             except Exception as e:
                 logger.error(f"[CHANNEL] Ошибка отправки в канал {TELEGRAM_CHANNEL_ID}: {e}", exc_info=True)
 
-
-import re
 
 def _is_yes(s: str | None) -> bool:
     return bool(s) and re.match(r'^(да|yes|y|true)\b', s.strip(), flags=re.I)
