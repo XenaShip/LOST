@@ -510,8 +510,8 @@ async def main():
                 await client.sign_in(password=password)
 
         CHANNEL_USERNAMES = [
-            "devarendatoriybotpytest",
-            "onmojetprogat",
+            "keystomoscow", "arendamsc", "onmojetprogat", "loltestneedxenaship",
+            "arendamsk_mo", "lvngrm_msk", "Sdat_Kvartiru0", "bestflats_msk", "nebabushkin_msk",
         ]
         try:
             channel_entities = await asyncio.gather(
