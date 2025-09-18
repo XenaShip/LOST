@@ -1,28 +1,15 @@
-import os
 import asyncio
-import random
 import logging
 import re
-import time
-from datetime import datetime
 from telegram import InputMediaVideo
 import telethon
 import django
-import requests
-from anyio import current_time
-from django.utils.regex_helper import contains
 from telegram import Bot, InputMediaPhoto
-from telegram.error import RetryAfter
+from telegram.error import RetryAfter, BadRequest
 from telethon import TelegramClient, events
 from dotenv import load_dotenv
 from asgiref.sync import sync_to_async
-from django.core.files.base import ContentFile
-from django.core.files.storage import default_storage
-from yandex_cloud_ml_sdk import YCloudML
-import sys
 import os
-
-from bot_cian import message_handler, save_message_to_db
 from district import get_district_by_coords, get_coords_by_address
 from make_info import process_text_with_gpt_price, process_text_with_gpt_sq, process_text_with_gpt_adress, \
     process_text_with_gpt_rooms
@@ -116,88 +103,97 @@ async def download_media(message):
     return media_list[:10]
 
 
-async def send_media_group(bot, chat_id, text, media_items):
+def _is_non_empty_file(path: str) -> bool:
+    try:
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+    except Exception:
+        return False
+
+def build_post_text(base_text: str, contacts: str | None, add_quote: bool = True) -> str:
     """
-    Отправляет список медиа (фото и видео) в одном media_group.
-    Подпись (text) добавляется только к первому элементу.
+    Возвращает финальный текст:
+    — добавляет блок 'Контакты: ...' один раз (если его ещё нет и контакты валидные)
+    — добавляет цитату с HTML-ссылкой на бота (если add_quote=True)
+    — соблюдает двойные пустые строки между абзацами
     """
+    text = base_text or ""
+    # нормализуем переносы: двойные пустые строки между абзацами
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    text = "\n\n".join(lines)
+
+    # добавим контакты, если их ещё нет
+    if contacts and contacts.lower() not in ["нет", "нет."] and "Контакты:" not in text:
+        text += "\n\nКонтакты: " + contacts
+
+    if add_quote:
+        text += (
+            "\n\n— <i>Настройте фильтры в "
+            "<a href='https://t.me/arendatoriy_find_bot'>боте</a> "
+            "и получайте только подходящие варианты</i>"
+        )
+    return text
+
+async def send_media_group(bot, chat_id, text, media_items, parse_mode: str = "HTML"):
     if not media_items:
-        # Если медиа нет, отправляем просто текст
-        await bot.send_message(chat_id, text)
+        await bot.send_message(chat_id, text, parse_mode=parse_mode)
         return
 
-    media_group = []
-    open_files = []
-    for idx, item in enumerate(media_items):
-        file_path = item['path']
-        if not os.path.exists(file_path):
+    media_group, open_files, valid_paths = [], [], []
+
+    for item in media_items:
+        file_path = item.get("path")
+        file_type = item.get("type")
+        if not file_path or not _is_non_empty_file(file_path):
             continue
-        f = open(file_path, 'rb')
+        try:
+            f = open(file_path, "rb")
+        except Exception:
+            continue
+
         open_files.append(f)
-        # Первый элемент получает подпись
-        caption = text if idx == 0 else None
-        if item['type'] == 'photo':
-            media = InputMediaPhoto(media=f, caption=caption)
+        valid_paths.append((file_path, file_type))
+        caption = text if len(media_group) == 0 else None
+
+        if file_type == "photo":
+            media_group.append(InputMediaPhoto(media=f, caption=caption, parse_mode=parse_mode))
         else:
-            media = InputMediaVideo(media=f, caption=caption)
-        media_group.append(media)
+            media_group.append(InputMediaVideo(media=f, caption=caption, parse_mode=parse_mode))
 
-    # Отправляем одним media_group. Требуется 2–10 элементов:contentReference[oaicite:3]{index=3}.
-    if len(media_group) == 1:
-        # Если только один элемент, отправляем его обычным методом
-        m = media_group[0]
-        if isinstance(m, InputMediaPhoto):
-            await bot.send_photo(chat_id, m.media, caption=text)
+    if not media_group:
+        await bot.send_message(chat_id, text, parse_mode=parse_mode)
+        return
+
+    try:
+        if len(media_group) == 1:
+            file_path, file_type = valid_paths[0]
+            try:
+                if open_files:
+                    open_files[0].close()
+            except Exception:
+                pass
+            open_files = []
+
+            if not _is_non_empty_file(file_path):
+                await bot.send_message(chat_id, text, parse_mode=parse_mode)
+                return
+
+            with open(file_path, "rb") as fresh_f:
+                if file_type == "photo":
+                    await bot.send_photo(chat_id, fresh_f, caption=text, parse_mode=parse_mode)
+                else:
+                    await bot.send_video(chat_id, fresh_f, caption=text, parse_mode=parse_mode)
         else:
-            await bot.send_video(chat_id, m.media, caption=text)
-    else:
-        await bot.send_media_group(chat_id=chat_id, media=media_group)
-    # Закрываем файлы
-    for f in open_files:
-        f.close()
+            await bot.send_media_group(chat_id=chat_id, media=media_group)
 
-
-async def send_images_with_text(bot, chat_id, text, images):
-    """Отправляет все изображения в Telegram, первое с текстом, остальные без."""
-    media_group = []
-    open_files = []  # Список открытых файлов, чтобы их не закрыл `with open`
-
-    for index, image_path in enumerate(images):
-        if os.path.exists(image_path):
-            img_file = open(image_path, "rb")  # Открываем файл и сохраняем
-            open_files.append(img_file)  # Добавляем в список, чтобы не закрылся
-
-            if index == 0:
-                media_group.append(InputMediaPhoto(media=img_file, caption=text))
-            else:
-                media_group.append(InputMediaPhoto(media=img_file))
-
-    if media_group:
-        await bot.send_media_group(chat_id=chat_id, media=media_group)
-
-    # Закрываем файлы после отправки
-    for img_file in open_files:
-        img_file.close()
-
-
-async def download_images(message):
-    """Скачивает все фото из сообщения (включая альбом)"""
-    images = []  # Список путей загруженных фото
-
-    # 1️⃣ Проверяем, является ли сообщение частью альбома
-    if message.grouped_id:
-        # Получаем ВСЕ сообщения с таким же `grouped_id`
-        album_messages = await client.get_messages(message.chat_id, min_id=message.id - 10, max_id=message.id + 10)
-        photos = [msg.photo for msg in album_messages if msg.photo]  # Оставляем только фото
-    else:
-        # Если одиночное фото — обрабатываем только текущее сообщение
-        photos = [message.photo] if message.photo else []
-
-    # 2️⃣ Скачиваем фото
-    for photo in photos:
-        file_path = await client.download_media(photo, DOWNLOAD_FOLDER)
-        if file_path:
-            images.append(file_path)
+    except BadRequest as e:
+        # отправим хотя бы текст, чтобы не терять пост
+        await bot.send_message(chat_id, text, parse_mode=parse_mode)
+    finally:
+        for f in open_files:
+            try:
+                f.close()
+            except Exception:
+                pass
 
 
 async def check_subscriptions_and_notify(info_instance, contacts):
@@ -245,16 +241,15 @@ def safe_parse_number(value):
 
 async def send_notification(user_id: int, ad_data: dict, message, contacts):
     """
-    Отправка уведомления пользователю с поддержкой URL изображений (aiogram v3)
-
+    Отправка уведомления пользователю с поддержкой URL изображений (python-telegram-bot).
     """
     try:
-        safe_text = message.new_text
+        # Базовый текст из БД (уже отформатирован в new_message_handler)
+        safe_text = message.new_text or ""
 
-        # Добавляем контакты, если их нет
-        if "Контакты" not in safe_text:
-            if contacts and contacts.lower() not in ['нет', 'нет.']:
-                safe_text += " Контакты: " + contacts
+        # Добавим контакты и цитату, если ещё не добавлены здесь
+        # (на всякий случай делаем это и в уведомлениях — вдруг текст в БД был без них)
+        safe_text = build_post_text(safe_text, contacts, add_quote=True)
 
         media_paths = ad_data.get('images') or []
         media_group = []
@@ -262,27 +257,29 @@ async def send_notification(user_id: int, ad_data: dict, message, contacts):
         for idx, media_path in enumerate(media_paths[:10]):
             caption = safe_text if idx == 0 else None
 
-            # Aiogram v3 требует именованные аргументы
             if str(media_path).startswith("http"):
-                media_group.append(InputMediaPhoto(media=media_path, caption=caption))
+                media_group.append(InputMediaPhoto(media=media_path, caption=caption, parse_mode="HTML"))
             elif os.path.exists(media_path):
-                # локальный файл открывать не нужно, aiogram сам откроет по пути
-                media_group.append(InputMediaPhoto(media=open(media_path, "rb"), caption=caption))
+                media_group.append(InputMediaPhoto(media=open(media_path, "rb"), caption=caption, parse_mode="HTML"))
+
         await asyncio.sleep(5)
+
         if media_group:
             if len(media_group) == 1:
-                await bot2.send_photo(chat_id=user_id, photo=media_group[0].media, caption=safe_text)
+                # одиночное фото
+                await bot2.send_photo(chat_id=user_id, photo=media_group[0].media, caption=safe_text, parse_mode="HTML")
             else:
+                # альбом — parse_mode задан внутри каждого InputMediaPhoto
                 await bot2.send_media_group(chat_id=user_id, media=media_group)
         else:
-            await bot2.send_message(chat_id=user_id, text=safe_text)
+            await bot2.send_message(chat_id=user_id, text=safe_text, parse_mode="HTML")
 
         logger.info(f"[NOTIFY] Отправлено объявление пользователю {user_id}")
 
     except RetryAfter as e:
         logger.warning(f"[NOTIFY] Flood control, повтор через {e.timeout} сек.")
         await asyncio.sleep(e.timeout)
-        await send_notification(user_id, ad_data, message)
+        await send_notification(user_id, ad_data, message, contacts)  # не забудь передать contacts
     except Exception as e:
         logger.error(f"[NOTIFY] Ошибка при отправке уведомления пользователю {user_id}: {e}", exc_info=True)
 
@@ -422,8 +419,9 @@ async def new_message_handler(event):
                 return
         help_text = await asyncio.to_thread(process_text_with_gpt3, text)
         new_text = await asyncio.to_thread(process_text_with_gpt, text)
-        new_text = new_text.replace("*", "\n")
-
+        new_text = new_text.replace("*", "\n\n")
+        lines = [line.strip() for line in new_text.split("\n") if line.strip()]
+        new_text = "\n\n".join(lines)
         # БЫЛО: строгая проверка на "да"/"ответ: да"
         if not _is_yes(help_text):
             new_text = 'нет'
@@ -439,8 +437,15 @@ async def new_message_handler(event):
         )
 
         if not (new_text.lower() in ['нет', 'нет.']):
-            new_text += "\nКонтакты: " + contacts
+            if not (new_text.lower() in ['нет', 'нет.']):
+                new_text += "\n\nКонтакты: " + contacts
 
+                # 📌 Добавляем цитату в конце
+                new_text += (
+                    "\n\n— <i>Настройте фильтры в "
+                    "<a href='https://t.me/arendatoriy_find_bot'>боте</a> "
+                    "и получайте только подходящие варианты</i>"
+                )
             address = process_text_with_gpt_adress(new_text)
             coords = get_coords_by_address(address)
 
@@ -470,16 +475,19 @@ async def new_message_handler(event):
 
         # Отправляем результат в Telegram-канал
         if new_text.lower() not in ['нет', 'нет.']:
-            if media_items:
-                await send_media_group(bot, TELEGRAM_CHANNEL_ID, new_text, media_items)
-            else:
-                await bot.send_message(chat_id=TELEGRAM_CHANNEL_ID, text=new_text)
+            try:
+                if media_items:
+                    await send_media_group(bot, TELEGRAM_CHANNEL_ID, new_text, media_items)
+                else:
+                    await bot.send_message(
+                        chat_id=TELEGRAM_CHANNEL_ID,
+                        text=new_text,
+                        parse_mode="HTML"
+                    )
+                logger.info(f"[CHANNEL] Пост отправлен в {TELEGRAM_CHANNEL_ID}")
+            except Exception as e:
+                logger.error(f"[CHANNEL] Ошибка отправки в канал {TELEGRAM_CHANNEL_ID}: {e}", exc_info=True)
 
-        # Задержка между сообщениями
-        await asyncio.sleep(5)
-
-
-import re
 
 def _is_yes(s: str | None) -> bool:
     return bool(s) and re.match(r'^(да|yes|y|true)\b', s.strip(), flags=re.I)
@@ -502,8 +510,8 @@ async def main():
                 await client.sign_in(password=password)
 
         CHANNEL_USERNAMES = [
-            "keystomoscow", "arendamsc", "onmojetprogat", "loltestneedxenaship",
-            "arendamsk_mo", "lvngrm_msk", "Sdat_Kvartiru0", "bestflats_msk", "nebabushkin_msk",
+            "devarendatoriybotpytest",
+            "onmojetprogat",
         ]
         try:
             channel_entities = await asyncio.gather(
