@@ -52,23 +52,63 @@ logging.basicConfig(level=logging.INFO)
 
 bot2 = Bot(token=os.getenv("TOKEN3"))
 
+
 async def send_images_with_text(bot, chat_id, text, images):
-    """Отправляет изображения в Telegram, первое с текстом, остальные без."""
+    """
+    Шлём максимум 8 фото, пропуская первые 2 (обычно логотипы CIAN).
+    Первое реальное фото несёт caption; если фото нет — отправляем просто текст.
+    В конец добавляем цитату с HTML-ссылкой на бота.
+    """
+    from aiogram.types import InputMediaPhoto
+
+    quote = ("\n\n— <i>Настройте фильтры в "
+             "<a href='https://t.me/arendatoriy_find_bot'>боте</a> "
+             "и получайте только подходящие варианты</i>")
+
+    base = escape_html(text or "")
+    caption = base + quote
+
+    usable = (images or [])[2:10]  # пропускаем 2, берём до 8
+    if not usable:
+        await bot.send_message(chat_id=chat_id, text=caption, parse_mode="HTML")
+        return
+
     media_group = []
-    for index, img_url in enumerate(images):
-        if index == 0:
-            media_group.append(InputMediaPhoto(media=img_url, caption=text))  # Первое изображение с текстом
+    for idx, img_url in enumerate(usable):
+        if idx == 0:
+            media_group.append(InputMediaPhoto(media=img_url, caption=caption, parse_mode="HTML"))
         else:
             media_group.append(InputMediaPhoto(media=img_url))
 
-    if media_group:
+    if len(media_group) == 1:
+        await bot.send_photo(chat_id=chat_id, photo=media_group[0].media, caption=caption, parse_mode="HTML")
+    else:
         await bot.send_media_group(chat_id=chat_id, media=media_group)
 
 
+
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+
+def escape_html(text: str) -> str:
+    if text is None:
+        return ""
+    return (text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+def escape_attr(text: str) -> str:
+    if text is None:
+        return ""
+    return (text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;"))
 
 def escape_md_v2(text):
     special_chars = r"_*[]()~`>#+-=|{}.!"
@@ -77,8 +117,6 @@ def escape_md_v2(text):
 
 def fetch_page_data(url):
     """Загружает страницу через undetected_chromedriver и извлекает текст и изображения"""
-    from webdriver_manager.chrome import ChromeDriverManager
-    from selenium.webdriver.chrome.service import Service
 
     options = uc.ChromeOptions()
     options.add_argument("--headless=new")
@@ -93,7 +131,7 @@ def fetch_page_data(url):
     driver = None
     try:
         # Инициализация драйвера с автоматической установкой ChromeDriver
-        driver = uc.Chrome(options=options, version_main=138)
+        driver = uc.Chrome(options=options, use_subprocess=True)
 
         driver.set_page_load_timeout(60)
         logging.info(f"Открываю страницу: {url}")
@@ -262,86 +300,155 @@ def safe_parse_number(value):
     except:
         return None
 
-
 async def send_notification(user_id: int, ad_data: dict, message):
     """
-    Отправка уведомления пользователю с поддержкой URL изображений (aiogram v3)
+    Отправка уведомления пользователю (aiogram v3):
+    - пропускаем первые 2 картинки (логотипы),
+    - берём максимум 8,
+    - caption кладём на первое реальное фото,
+    - добавляем в конец цитату с ссылкой на бота (HTML),
+    - если картинок нет — шлём только текст.
     """
+    import os
+    import asyncio
+    from aiogram.types import InputMediaPhoto
     try:
-        safe_text = message.new_text
+        from aiogram.exceptions import TelegramRetryAfter
+    except Exception:
+        TelegramRetryAfter = Exception  # на случай старых версий
 
-        # Добавляем контакты, если их нет
-        if "Контакты" not in safe_text:
-            contacts = await asyncio.to_thread(process_text_with_gpt2, message.text)
-            if contacts and contacts.lower() not in ['нет', 'нет.']:
-                safe_text += " Контакты: " + contacts
+    safe_text = message.new_text or ""
 
-        media_paths = ad_data.get('images') or []
-        media_group = []
+    # Добавим контакты, если их нет в тексте
+    if "Контакты" not in safe_text:
+        contacts = await asyncio.to_thread(process_text_with_gpt2, message.text)
+        if contacts and contacts.lower() not in ['нет', 'нет.']:
+            safe_text += " Контакты: " + contacts
 
-        for idx, media_path in enumerate(media_paths[:10]):
-            caption = safe_text if idx == 0 else None
+    # Собираем итоговый HTML-caption
+    quote = ("\n\n— <i>Настройте фильтры в "
+             "<a href='https://t.me/arendatoriy_find_bot'>боте</a> "
+             "и получайте только подходящие варианты</i>")
+    caption_html = escape_html(safe_text) + quote
 
-            # Aiogram v3 требует именованные аргументы
-            if str(media_path).startswith("http"):
-                media_group.append(InputMediaPhoto(media=media_path, caption=caption))
-            elif os.path.exists(media_path):
-                # локальный файл открывать не нужно, aiogram сам откроет по пути
-                media_group.append(InputMediaPhoto(media=open(media_path, "rb"), caption=caption))
+    media_paths = ad_data.get('images') or []
+    usable = media_paths[2:10]  # пропускаем 2, максимум 8
 
+    media_group = []
+    for idx, media_path in enumerate(usable):
+        cap = caption_html if idx == 0 else None
+        if isinstance(media_path, str) and media_path.startswith("http"):
+            item = InputMediaPhoto(media=media_path, caption=cap)
+            if cap:
+                item.parse_mode = "HTML"
+            media_group.append(item)
+        elif media_path and os.path.exists(media_path):
+            item = InputMediaPhoto(media=open(media_path, "rb"), caption=cap)
+            if cap:
+                item.parse_mode = "HTML"
+            media_group.append(item)
+
+    try:
         if media_group:
             if len(media_group) == 1:
-                await bot2.send_photo(chat_id=user_id, photo=media_group[0].media, caption=safe_text)
+                await bot2.send_photo(chat_id=user_id, photo=media_group[0].media, caption=caption_html, parse_mode="HTML")
             else:
                 await bot2.send_media_group(chat_id=user_id, media=media_group)
         else:
-            await bot2.send_message(chat_id=user_id, text=safe_text)
+            await bot2.send_message(chat_id=user_id, text=caption_html, parse_mode="HTML")
 
         logger.info(f"[NOTIFY] Отправлено объявление пользователю {user_id}")
-
-    except RetryAfter as e:
-        logger.warning(f"[NOTIFY] Flood control, повтор через {e.timeout} сек.")
-        await asyncio.sleep(e.timeout)
+    except TelegramRetryAfter as e:
+        logger.warning(f"[NOTIFY] Flood control, повтор через {getattr(e, 'timeout', 1)} сек.")
+        await asyncio.sleep(getattr(e, 'timeout', 1))
         await send_notification(user_id, ad_data, message)
     except Exception as e:
         logger.error(f"[NOTIFY] Ошибка при отправке уведомления пользователю {user_id}: {e}", exc_info=True)
 
+
+async def send_to_channel(bot, channel_id: int, new_text: str, url: str, image_urls: list[str]):
+    """
+    Публикуем в канал:
+    - пропускаем первые 2 изображения (логотипы),
+    - берём максимум 8,
+    - caption ставим на первое реальное фото,
+    - добавляем цитату с HTML-ссылкой на бота,
+    - используем parse_mode="HTML".
+    """
+    from aiogram.types import InputMediaPhoto
+
+    base = escape_html(new_text or "")
+    link = f"<a href='{escape_attr(url)}'>Контакты</a>"
+    quote = ("\n\n— <i>Настройте фильтры в "
+             "<a href='https://t.me/arendatoriy_find_bot'>боте</a> "
+             "и получайте только подходящие варианты</i>")
+    caption = f"{base}\n📞 {link}{quote}"
+
+    usable = (image_urls or [])[2:10]
+
+    if usable:
+        media_group = []
+        for idx, img in enumerate(usable):
+            if idx == 0:
+                media_group.append(InputMediaPhoto(media=img, caption=caption, parse_mode="HTML"))
+            else:
+                media_group.append(InputMediaPhoto(media=img))
+
+        if len(media_group) == 1:
+            await bot.send_photo(chat_id=channel_id,
+                                 photo=media_group[0].media,
+                                 caption=caption,
+                                 parse_mode="HTML")
+        else:
+            await bot.send_media_group(chat_id=channel_id, media=media_group)
+    else:
+        await bot.send_message(chat_id=channel_id, text=caption, parse_mode="HTML")
+
+
 @dp.message()
 async def message_handler(message: Message):
-    url = message.text.strip()
+    # 1) Берём URL из сообщения и подтверждаем старт
+    url = (message.text or "").strip()
+    if not url:
+        await message.answer("Пришлите ссылку на объявление CIAN.")
+        return
+
     await message.answer("🔍 Обрабатываю страницу, подождите...")
 
-    # Получаем текст, изображения и телефон
+    # 2) Парсим страницу: сырой текст + src картинок (до 10)
     text, images = fetch_page_data(url)
-
     if not text and not images:
         await message.answer("⚠️ Не удалось найти данные на странице.")
         return
 
-    # Загружаем изображения
+    # 3) (Опционально) «скачиваем» картинки — у тебя сохраняются URL
     image_urls = await download_images(images)
 
-    # Обновляем текст через GPT
-    new_text = await asyncio.to_thread(process_text_with_gpt, text)
+    # 4) Готовим человекочитаемый текст объявления (без Markdown-звёздочек и мусора)
+    new_text = await asyncio.to_thread(process_text_with_gpt, text)  # CPU-bound → в поток
+    # убираем * и схлопываем пустые строки
     new_text = new_text.replace("*", " ")
-    print(new_text)
+    lines = [ln.strip() for ln in new_text.splitlines() if ln.strip()]
+    new_text = "\n\n".join(lines)
 
+    # 5) Сохраняем сообщение в БД (как и раньше — с добавлением "Контакты <url>")
     mmessage = await sync_to_async(MESSAGE.objects.create)(
         text=text,
         images=images if images else None,
-        new_text=new_text + f' Контакты {url}'
+        new_text=new_text + f" Контакты {url}",
     )
-    if new_text != 'Нет' and new_text != 'Нет.':
+
+    # 6) Извлекаем структурку для DEVINFO и сохраняем
+    if new_text not in ("Нет", "Нет."):
         address = process_text_with_gpt_adress(new_text)
         coords = get_coords_by_address(address)
 
-        # Преобразуем площадь в целое число
         def parse_flat_area(value):
+            """Преобразуем площадь к int, если пришла строка с 'м²' и пр."""
             try:
                 if isinstance(value, str):
-                    # Удаляем все нецифровые символы и берем целую часть
-                    value = ''.join(c for c in value if c.isdigit())
-                    return int(value) if value else None
+                    digits = "".join(c for c in value if c.isdigit())
+                    return int(digits) if digits else None
                 return int(value) if value is not None else None
             except (ValueError, TypeError):
                 return None
@@ -351,33 +458,20 @@ async def message_handler(message: Message):
         info = await sync_to_async(INFO.objects.create)(
             message=mmessage,
             price=process_text_with_gpt_price(new_text),
-            count_meters_flat=flat_area,  # Используем преобразованное значение
+            count_meters_flat=flat_area,
             count_meters_metro=find_nearest_metro(*coords),
             location=get_district_by_coords(*coords),
-            adress=process_text_with_gpt_adress(new_text),
-            rooms=process_text_with_gpt_rooms(new_text)
+            adress=address,
+            rooms=process_text_with_gpt_rooms(new_text),
         )
-        asyncio.create_task(check_subscriptions_and_notify(info))
+        # Асинхронно проверяем подписки и шлём уведомления
+        asyncio.create_task(check_subscriptions_and_notify(info))  # шлёт с HTML-цитатой и срезом 2:10
 
-    # Отправляем сообщение в канал
-    media_group = [InputMediaPhoto(media=img_url) for img_url in image_urls[1:]]  # Пропускаем первое изображение
+    # 7) Публикуем в канал (функция уже делает HTML-цитату и берёт фото [2:10])
+    await send_to_channel(bot, TELEGRAM_CHANNEL_ID, new_text, url, image_urls)  # HTML+quote внутри функции. :contentReference[oaicite:2]{index=2}
 
-    if media_group:
-        caption = f"{escape_md_v2(new_text)}\n📞 [Контакты]({escape_md_v2(url)})"
-        media_group[0].caption = caption
-        media_group[0].parse_mode = "MarkdownV2"
-        await bot.send_media_group(chat_id=TELEGRAM_CHANNEL_ID, media=media_group)
-    else:
-        text = f"{escape_md_v2(new_text)}\n📞 [Контакты]({escape_md_v2(url)})"
-        await bot.send_message(TELEGRAM_CHANNEL_ID, text, parse_mode="MarkdownV2")
-
+    # 8) Ответ пользователю
     await message.answer("✅ Данные сохранены и отправлены!")
-
-
-async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
 
 
 async def main():
