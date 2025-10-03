@@ -16,13 +16,24 @@ services:
     networks: [app_network]
     restart: unless-stopped
 
-  # (опционально) redis, если нужен
-  # redis:
-  #   image: redis:7-alpine
-  #   networks: [app_network]
-  #   restart: unless-stopped
+  # --- БОТ 1: парсер каналов (bot.py) ---
+  bot1:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot_cian   # можно один Dockerfile на всех; лишний Chromium не мешает
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Moscow
+      IN_DOCKER: "1"
+    command: ["python", "bot.py"]
+    depends_on:
+      - db
+    networks: [app_network]
+    restart: unless-stopped
 
-  bot3:
+  # --- БОТ 2: подписки/рассылки (bot_3_2.py) ---
+  bot2:
     build:
       context: .
       dockerfile: Dockerfile.bot_cian
@@ -30,27 +41,35 @@ services:
       - .env
     environment:
       TZ: Europe/Moscow
-      # Chromium из образа:
-      CHROME_BIN: /usr/bin/chromium
-      # Если хочешь подсказать мажорную версию драйвера:
-      UC_VERSION_MAIN: "141"
-      # В контейнере Headless + безопасные флаги
-      CHROME_EXTRA_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --window-size=1920,1080 --disable-blink-features=AutomationControlled --headless=new"
-      # Чтобы код мог знать, что мы в контейнере (не обязательно, но удобно)
       IN_DOCKER: "1"
-    volumes:
-      # большой /dev/shm устраняет краши в headless-хроме
-      - /dev/shm:/dev/shm
-      - /etc/localtime:/etc/localtime:ro
+    command: ["python", "bot_3_2.py"]   # если у тебя другое имя файла — замени здесь
     depends_on:
       - db
-      # - redis
     networks: [app_network]
     restart: unless-stopped
-    # при желании: ограничение ресурсов
-    # deploy:
-    #   resources:
-    #     limits: { cpus: "1.0", memory: "1024M" }
+
+  # --- БОТ 3: CIAN (bot_cian.py) ---
+  bot_cian:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot_cian
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Moscow
+      IN_DOCKER: "1"
+      UC_VERSION_MAIN: "141"  # мажорная версия Chrome/ChromeDriver на сервере
+      # безопасные флаги для headless Chrome в контейнере
+      CHROME_EXTRA_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --window-size=1920,1080 --disable-blink-features=AutomationControlled --headless=new"
+    # большой /dev/shm уменьшает падения браузера
+    volumes:
+      - /dev/shm:/dev/shm
+      - /etc/localtime:/etc/localtime:ro
+    command: ["python", "bot_cian.py"]
+    depends_on:
+      - db
+    networks: [app_network]
+    restart: unless-stopped
 
 networks:
   app_network:
