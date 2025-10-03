@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import re
+import re, math
 from telegram import InputMediaVideo
 import telethon
 import django
@@ -22,14 +22,13 @@ load_dotenv()
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
 
-from main.models import  MESSAGE, INFO, Subscription  # Используем новую модель
+from main.models import  MESSAGE, INFO, Subscription
 
 # Настройка логгера
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 processed_group_ids = set()      # (chat_id, grouped_id)
 processed_message_ids = set()
-
 
 bot2 = Bot(token=os.getenv("TOKEN3"))
 # Конфигурация
@@ -43,6 +42,7 @@ METRO_CLOSE_MAX_METERS = int(os.getenv("METRO_CLOSE_MAX_METERS", "1200"))
 TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 YANDEX_GPT_API_KEY = os.getenv("YANDEX_GPT_API_KEY")
 DOWNLOAD_FOLDER = "downloads/"
+
 
 # Инициализация клиента Telethon
 client = TelegramClient(SESSION_NAME, API_ID, API_HASH, system_version='1.2.3-zxc-custom',
@@ -198,44 +198,89 @@ async def send_media_group(bot, chat_id, text, media_items, parse_mode: str = "H
 
 async def check_subscriptions_and_notify(info_instance, contacts):
     logger.info(f"🔔 Начало обработки подписок для объявления {info_instance.id}")
-    # Получаем все активные подписки
-    subscriptions = await sync_to_async(list)(Subscription.objects.filter(is_active=True))
+
+    subscriptions = await sync_to_async(list)(
+        Subscription.objects.filter(is_active=True)
+    )
     logger.info(f"📋 Найдено {len(subscriptions)} активных подписок")
     if not subscriptions:
         logger.info("❌ Нет активных подписок, пропускаем уведомления")
         return
-    # Получаем данные объявления
+
     ad_data = {
         'price': info_instance.price,
         'rooms': info_instance.rooms,
-        'count_meters_flat': info_instance.count_meters_flat,  # Добавлено поле площади
+        'count_meters_flat': info_instance.count_meters_flat,
         'location': info_instance.location,
         'count_meters_metro': info_instance.count_meters_metro,
         'address': info_instance.adress,
         'images': info_instance.message.images,
         'description': info_instance.message.new_text
     }
+
+    logger.info(
+        f"AD → price={ad_data['price']}, rooms={ad_data['rooms']}, "
+        f"area={ad_data['count_meters_flat']}, metro={ad_data['count_meters_metro']}, "
+        f"district={ad_data['location']}"
+    )
+
     matched_users = set()
     for subscription in subscriptions:
-        is_match = await sync_to_async(is_ad_match_subscription)(ad_data, subscription)
-        if is_match and subscription.user_id not in matched_users:
+        ok = await sync_to_async(is_ad_match_subscription)(ad_data, subscription)
+        logger.info(
+            f"[CHECK] user_id={subscription.user_id} match={ok} | "
+            f"sub: price[{getattr(subscription, 'min_price', None)}..{getattr(subscription, 'max_price', None)}], "
+            f"rooms[{getattr(subscription, 'min_rooms', None)}..{getattr(subscription, 'max_rooms', None)}], "
+            f"area[{getattr(subscription, 'min_flat', None)}..{getattr(subscription, 'max_flat', None)}], "
+            f"district={getattr(subscription, 'district', None)}, "
+            f"metro_close={getattr(subscription, 'metro_close', None)} "
+        )
+        if ok and subscription.user_id not in matched_users:
             matched_users.add(subscription.user_id)
             await send_notification(subscription.user_id, ad_data, info_instance.message, contacts)
+
+    logger.info(f"✅ Рассылка завершена: совпадений {len(matched_users)}")
+
 
 def escape_markdown(text: str) -> str:
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 def safe_parse_number(value):
+    """
+    Преобразует что угодно ('60 000', '60 000', '34,6', 35, None) → float | None.
+    Поддерживает обычные и узкие неразрывные пробелы.
+    """
     if value is None:
         return None
-    if isinstance(value, str):
-        value = value.replace(',', '.').strip()
-        # оставляем только цифры и точку
-        value = ''.join(c for c in value if c.isdigit() or c == '.')
-    try:
+    if isinstance(value, (int, float)):
         return float(value)
-    except:
+
+    s = str(value).strip()
+
+    # Нормализуем разделители
+    NBSP = '\u00A0'
+    NNBSP = '\u202F'
+    s = s.replace(NBSP, ' ').replace(NNBSP, ' ')
+    s = s.replace(',', '.')  # десятичная запятая → точка
+
+    # Оставляем только цифры и одну точку
+    cleaned = []
+    dot_seen = False
+    for ch in s:
+        if ch.isdigit():
+            cleaned.append(ch)
+        elif ch == '.' and not dot_seen:
+            cleaned.append(ch)
+            dot_seen = True
+        # прочее отбрасываем (валюта, текст)
+
+    s2 = ''.join(cleaned)
+    if not s2:
+        return None
+    try:
+        return float(s2)
+    except Exception:
         return None
 
 
@@ -286,74 +331,93 @@ async def send_notification(user_id: int, ad_data: dict, message, contacts):
 
 def is_ad_match_subscription(ad_data, subscription):
     """
-    Соответствие объявления подписке (под новые кнопки цены):
-      ЦЕНА:
-        1) "До 35 000₽"         -> min=None,  max=35000
-        2) "35–65 тыс. ₽"       -> min=35000, max=65000
-        3) "50–100 тыс. ₽"      -> min=50000, max=100000
-        4) "Не важно"           -> min=None,  max=None  (фильтр цены не применяется)
-
-      Другое:
-        - Комнаты: 0 -> 1 (студия = 1 комната)
-        - Площадь: сверяем только если > 0
-        - Район: игнорируем, если None/ 'ANY'
-        - Метро: объявление подходит, если расстояние <= лимита
+    Логика:
+      • Цена: [min_price .. max_price] (если заданы)
+      • Комнаты: [min_rooms .. max_rooms] (если заданы), 0 → 1 (студия)
+      • Площадь: [min_flat .. max_flat] (если заданы), площадь > 0
+      • Округ: если subscription.district в (None, 'ANY') — не фильтруем; иначе строгое равенство
+      • Метро: ИГНОРИРУЕМ subscription.max_metro_distance.
+               Применяем фильтр ТОЛЬКО если metro_close == True → расстояние ≤ DEF_CLOSE_METRO.
+               Если metro_close False/None → метро «не важно», объявление проходит по метро без ограничений.
     """
-    try:
-        ad_price = safe_parse_number(ad_data.get('price'))
-        ad_rooms = safe_parse_number(ad_data.get('rooms'))
-        ad_flat_area = safe_parse_number(ad_data.get('count_meters_flat'))
-        ad_metro_distance = safe_parse_number(ad_data.get('count_meters_metro'))
+    DEF_CLOSE_METRO = 800.0  # можно вынести в .env при желании
 
-        # Студия как 1 комната
-        if ad_rooms == 0:
+    def _num(x):
+        v = safe_parse_number(x)
+        return v
+
+    def _int(x):
+        v = safe_parse_number(x)
+        return int(v) if v is not None else None
+
+    def _reason(ok, why):
+        logger.info(f"[MATCH] {why} -> {ok}")
+        return ok
+
+    try:
+        # ---- объявление (нормализация) ----
+        ad_price      = _num(ad_data.get('price'))
+        ad_rooms      = _int(ad_data.get('rooms'))
+        ad_flat_area  = _num(ad_data.get('count_meters_flat'))
+        ad_metro_dist = _num(ad_data.get('count_meters_metro'))
+        ad_location   = (ad_data.get('location') or '').strip() if ad_data.get('location') is not None else None
+
+        if ad_rooms == 0:  # студия трактуется как 1 комната
             ad_rooms = 1
 
-        # ---------- ЦЕНА ----------
-        # Если выбрано "Не важно" -> min_price/max_price должны быть None
-        min_price = getattr(subscription, 'min_price', None)
-        max_price = getattr(subscription, 'max_price', None)
+        # ---- подписка (нормализация) ----
+        min_price = _num(getattr(subscription, 'min_price', None))
+        max_price = _num(getattr(subscription, 'max_price', None))
+        min_rooms = _int(getattr(subscription, 'min_rooms', None))
+        max_rooms = _int(getattr(subscription, 'max_rooms', None))
+        min_flat  = _num(getattr(subscription, 'min_flat',  None))
+        max_flat  = _num(getattr(subscription, 'max_flat',  None))
+        metro_close = bool(getattr(subscription, 'metro_close', False))
+        sub_district = getattr(subscription, 'district', None)
 
+        # ЦЕНА
         if ad_price is not None:
             if min_price is not None and ad_price < min_price:
-                return False
+                return _reason(False, f"price {ad_price} < min {min_price}")
             if max_price is not None and ad_price > max_price:
-                return False
-        # Если ad_price None — не валим объявление по цене, оставляем шанс другим фильтрам
+                return _reason(False, f"price {ad_price} > max {max_price}")
 
-        # ---------- КОМНАТЫ ----------
+        # КОМНАТЫ
         if ad_rooms is not None:
-            if getattr(subscription, 'min_rooms', None) is not None and int(ad_rooms) < subscription.min_rooms:
-                return False
-            if getattr(subscription, 'max_rooms', None) is not None and int(ad_rooms) > subscription.max_rooms:
-                return False
+            if min_rooms is not None and ad_rooms < min_rooms:
+                return _reason(False, f"rooms {ad_rooms} < min {min_rooms}")
+            if max_rooms is not None and ad_rooms > max_rooms:
+                return _reason(False, f"rooms {ad_rooms} > max {max_rooms}")
 
-        # ---------- ПЛОЩАДЬ ----------
-        if ad_flat_area and ad_flat_area > 0:
-            if getattr(subscription, 'min_flat', None) is not None and ad_flat_area < subscription.min_flat:
-                return False
-            if getattr(subscription, 'max_flat', None) is not None and ad_flat_area > subscription.max_flat:
-                return False
+        # ПЛОЩАДЬ
+        if ad_flat_area is not None and ad_flat_area > 0:
+            if min_flat is not None and ad_flat_area < min_flat:
+                return _reason(False, f"area {ad_flat_area} < min {min_flat}")
+            if max_flat is not None and ad_flat_area > max_flat:
+                return _reason(False, f"area {ad_flat_area} > max {max_flat}")
 
-        # ---------- РАЙОН ----------
-        sub_district = getattr(subscription, 'district', None)
+        # ОКРУГ / РАЙОН
+        # Если округ «не важен» (None/ANY) — не фильтруем; иначе требуется точное совпадение.
         if sub_district not in (None, 'ANY'):
-            # Пример: в объявлении район хранится в ad_data['location']
-            if ad_data.get('location') != sub_district:
-                return False
+            if (ad_location or '') != str(sub_district):
+                return _reason(False, f"district {ad_location} != {sub_district}")
 
-        # ---------- МЕТРО ----------
-        # Условие: объявление подходит, если фактическое расстояние <= максимального лимита подписки
-        max_metro = getattr(subscription, 'max_metro_distance', None)
-        if ad_metro_distance is not None and max_metro is not None:
-            if ad_metro_distance > max_metro:
-                return False
+        # МЕТРО
+        # ИГНОРИРУЕМ subscription.max_metro_distance полностью.
+        # Если metro_close == True → требуем расстояние ≤ DEF_CLOSE_METRO.
+        # Если metro_close == False/None → метро «не важно».
+        if metro_close is True:
+            # применяем ограничение только если расстояние у объявления известно
+            if ad_metro_dist is not None and ad_metro_dist > DEF_CLOSE_METRO:
+                return _reason(False, f"metro {ad_metro_dist}m > close_limit {DEF_CLOSE_METRO}m")
+            # если ad_metro_dist None — считаем неизвестным, пропускаем по метро
+        # metro_close False/None → не ограничиваем по метро вовсе
 
-        return True
-
+        return _reason(True, "ALL OK")
     except Exception as e:
         logger.error(f"Ошибка в фильтрации подписки: {e}", exc_info=True)
         return False
+
 
 
 
@@ -450,13 +514,15 @@ async def new_message_handler(event):
             coords = get_coords_by_address(address)
 
             def parse_flat_area(value):
-                try:
-                    if isinstance(value, str):
-                        value = ''.join(c for c in value if c.isdigit())
-                        return int(value) if value else None
-                    return int(value) if value is not None else None
-                except (ValueError, TypeError):
+                if value is None:
                     return None
+                s = str(value).replace(',', '.')
+                m = re.search(r'(\d+(?:\.\d+)?)', s)
+                if not m:
+                    return None
+                area = float(m.group(1))
+                # Принцип округления зафиксируйте один раз:
+                return int(round(area))  # или math.floor/math.ceil по вашему регламенту
 
             flat_area = parse_flat_area(process_text_with_gpt_sq(new_text))
 

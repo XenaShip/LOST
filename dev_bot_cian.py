@@ -106,58 +106,126 @@ def escape_md_v2(text):
     return "".join(f"\\{char}" if char in special_chars else char for char in text)
 
 
-def fetch_page_data(url):
-    """Загружает страницу через undetected_chromedriver и извлекает текст и изображения"""
+import os
+import re
+import time
+import logging
 
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+def _create_uc_driver(version_main: int, headless: bool = False):
+    """
+    Стартует undetected_chromedriver с заданной мажорной версией ChromeDriver.
+    По умолчанию headless=False (для CIAN стабильнее).
+    """
     options = uc.ChromeOptions()
-    options.add_argument("--headless=new")
+    if headless:
+        options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+    # НЕ задаём кастомный user-agent — uc подставит корректный
+
+    logging.warning(f"=== UC START: version_main={version_main}, headless={headless} ===")
+    driver = uc.Chrome(options=options, version_main=version_main, use_subprocess=True)
+    driver.set_page_load_timeout(60)
+    return driver
+
+
+def fetch_page_data(url: str):
+    """
+    Загружает страницу объявления и возвращает (page_text, image_urls).
+    Логика:
+      - Берём мажорную версию драйвера из ENV UC_VERSION_MAIN (по умолчанию 141).
+      - Пробуем запустить драйвер и открыть страницу.
+      - Если драйвер ругнулся "only supports Chrome version XXX" — повторяем с этой версией.
+      - Стабильно работает без headless; когда всё починишь — можно включить headless=True.
+    """
+    # Chrome у тебя уже 141 — ставим это значением по умолчанию
+    try:
+        version_main = int(os.getenv("UC_VERSION_MAIN", "141"))
+    except ValueError:
+        version_main = 141
 
     driver = None
-    try:
-        # Инициализация драйвера с автоматической установкой ChromeDriver
-        driver = uc.Chrome(options=options, use_subprocess=True)
+    tried_alt_version = False
 
-        driver.set_page_load_timeout(60)
+    try:
+        # 1-я попытка — с указанной/дефолтной версией
+        try:
+            driver = _create_uc_driver(version_main=version_main, headless=False)
+        except Exception as e1:
+            msg = str(e1)
+            m = re.search(r"only supports Chrome version\s+(\d+)", msg)
+            if m:
+                alt_version = int(m.group(1))
+                tried_alt_version = True
+                logging.warning(f"Повторный запуск UC с подсказанной версией: {alt_version}")
+                driver = _create_uc_driver(version_main=alt_version, headless=False)
+            else:
+                logging.error(f"Не удалось запустить драйвер: {msg}")
+                return "", []
+
         logging.info(f"Открываю страницу: {url}")
         driver.get(url)
 
-        WebDriverWait(driver, 30).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
+        # ждём появления body
+        WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
-        # Прокрутка страницы
+        # лёгкая прокрутка, чтобы догрузились картинки
         for _ in range(3):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1)
+            time.sleep(0.8)
 
-        page_text = driver.find_element(By.TAG_NAME, "body").text
+        # текст страницы
+        page_text = driver.find_element(By.TAG_NAME, "body").text or ""
 
+        # до 12 валидных картинок
         images = []
         for img in driver.find_elements(By.TAG_NAME, "img"):
             src = img.get_attribute("src")
-            if src and src.startswith(("http://", "https://")):
+            if src and src.startswith(("http://", "https://")) and "data:image" not in src:
                 images.append(src)
-            if len(images) >= 10:
+            if len(images) >= 12:
                 break
 
-        return page_text, images
+        # если совсем пусто — возможно, выдали заглушку; попробуем мобильный домен одной попыткой
+        if not page_text.strip() and not images and "://www.cian.ru/" in url:
+            try:
+                driver.get(url.replace("://www.cian.ru/", "://m.cian.ru/"))
+                WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+                for _ in range(2):
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                    time.sleep(0.6)
+                page_text = driver.find_element(By.TAG_NAME, "body").text or ""
+                images = []
+                for img in driver.find_elements(By.TAG_NAME, "img"):
+                    src = img.get_attribute("src")
+                    if src and src.startswith(("http://", "https://")) and "data:image" not in src:
+                        images.append(src)
+                    if len(images) >= 12:
+                        break
+            except Exception as e_mb:
+                logging.warning(f"Мобильная версия не помогла: {e_mb}")
+
+        return page_text.strip(), images
 
     except Exception as e:
-        logging.error(f"Ошибка при загрузке страницы: {str(e)}")
+        logging.error(f"Ошибка при загрузке страницы: {e}")
         return "", []
+
     finally:
         if driver:
             try:
                 driver.quit()
-            except:
+            except Exception:
                 pass
+
+
 
 
 
