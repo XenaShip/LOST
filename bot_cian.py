@@ -2,37 +2,26 @@ import asyncio
 import os
 import aiohttp
 import logging
-import time
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.filters import Command
 from dotenv import load_dotenv
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.webdriver.common.keys import Keys
 from telegram import InputMediaPhoto
 from telegram.error import RetryAfter
-from webdriver_manager.chrome import ChromeDriverManager
-from django.conf import settings
 from asgiref.sync import sync_to_async
 import django
-from yandex_cloud_ml_sdk import YCloudML
 from aiogram.types import InputMediaPhoto
-import undetected_chromedriver as uc
 import time
-import aiogram.utils.markdown as md
 import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
+from aiogram.types import InputMediaPhoto
+from aiogram.exceptions import TelegramRetryAfter
+from dev_bot import process_text_with_gpt2
 from district import get_coords_by_address, get_district_by_coords
 from make_info import process_text_with_gpt_adress, process_text_with_gpt_price, process_text_with_gpt_sq, \
     process_text_with_gpt_rooms
 from meters import find_nearest_metro
-from proccess import process_text_with_gpt2, process_text_with_gpt
-METRO_CLOSE_MAX_METERS = int(os.getenv("METRO_CLOSE_MAX_METERS", "1200"))
+from proccess import process_text_with_gpt
+
 # Настроим Django
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 django.setup()
@@ -113,7 +102,6 @@ def escape_attr(text: str) -> str:
 def escape_md_v2(text):
     special_chars = r"_*[]()~`>#+-=|{}.!"
     return "".join(f"\\{char}" if char in special_chars else char for char in text)
-
 
 
 import os
@@ -234,6 +222,7 @@ def fetch_page_data(url: str):
                 driver.quit()
             except Exception:
                 pass
+
 
 
 
