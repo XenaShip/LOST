@@ -114,22 +114,45 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-def _create_uc_driver(version_main: int, headless: bool = False):
+def _create_uc_driver(version_main: int, headless: bool | None = None):
     """
-    Стартует undetected_chromedriver с заданной мажорной версией ChromeDriver.
-    По умолчанию headless=False (для CIAN стабильнее).
+    Стартует undetected_chromedriver c явным бинарём Chrome в контейнере.
+    Если мы в Docker (или задан CHROME_BIN), принудительно headless и безопасные флаги.
     """
+    in_docker = os.path.exists("/.dockerenv") or os.getenv("IN_DOCKER") == "1"
+    chrome_bin = os.getenv("CHROME_BIN") or os.getenv("CHROMIUM_BIN")
+    if in_docker:
+        # в контейнере всегда headless
+        headless = True if headless is None else headless
+    else:
+        # локально можно и без headless
+        headless = False if headless is None else headless
+
     options = uc.ChromeOptions()
     if headless:
         options.add_argument("--headless=new")
+    # безопасные флаги для root в контейнере
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    # НЕ задаём кастомный user-agent — uc подставит корректный
+    # НЕ ставим кастомный user-agent
 
-    logging.warning(f"=== UC START: version_main={version_main}, headless={headless} ===")
-    driver = uc.Chrome(options=options, version_main=version_main, use_subprocess=True)
+    extra_args = (os.getenv("CHROME_EXTRA_ARGS") or "").split()
+    for a in extra_args:
+        if a:
+            options.add_argument(a)
+
+    logging.warning(f"=== UC START: version_main={version_main}, headless={headless}, bin={chrome_bin or 'system'} ===")
+
+    kwargs = dict(options=options, version_main=version_main, use_subprocess=True)
+    if chrome_bin:
+        # укажем явный бинарь Chrome, установленный в образ
+        kwargs["browser_executable_path"] = chrome_bin
+
+    driver = uc.Chrome(**kwargs)
     driver.set_page_load_timeout(60)
     return driver
 
@@ -137,33 +160,26 @@ def _create_uc_driver(version_main: int, headless: bool = False):
 def fetch_page_data(url: str):
     """
     Загружает страницу объявления и возвращает (page_text, image_urls).
-    Логика:
-      - Берём мажорную версию драйвера из ENV UC_VERSION_MAIN (по умолчанию 141).
-      - Пробуем запустить драйвер и открыть страницу.
-      - Если драйвер ругнулся "only supports Chrome version XXX" — повторяем с этой версией.
-      - Стабильно работает без headless; когда всё починишь — можно включить headless=True.
+    - Берём version_main из ENV (по умолчанию 141 — см. твой серверный лог).
+    - Делаем одну автоматическую повторную попытку, если драйвер подскажет другую мажорную версию.
+    - В контейнере принудительно headless + системный Chrome из CHROME_BIN.
     """
-    # Chrome у тебя уже 141 — ставим это значением по умолчанию
     try:
         version_main = int(os.getenv("UC_VERSION_MAIN", "141"))
     except ValueError:
         version_main = 141
 
     driver = None
-    tried_alt_version = False
-
     try:
-        # 1-я попытка — с указанной/дефолтной версией
         try:
-            driver = _create_uc_driver(version_main=version_main, headless=False)
+            driver = _create_uc_driver(version_main=version_main)
         except Exception as e1:
             msg = str(e1)
             m = re.search(r"only supports Chrome version\s+(\d+)", msg)
             if m:
-                alt_version = int(m.group(1))
-                tried_alt_version = True
-                logging.warning(f"Повторный запуск UC с подсказанной версией: {alt_version}")
-                driver = _create_uc_driver(version_main=alt_version, headless=False)
+                hinted = int(m.group(1))
+                logging.warning(f"Повторный запуск UC с подсказанной версией: {hinted}")
+                driver = _create_uc_driver(version_main=hinted)
             else:
                 logging.error(f"Не удалось запустить драйвер: {msg}")
                 return "", []
@@ -171,18 +187,13 @@ def fetch_page_data(url: str):
         logging.info(f"Открываю страницу: {url}")
         driver.get(url)
 
-        # ждём появления body
         WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-
-        # лёгкая прокрутка, чтобы догрузились картинки
         for _ in range(3):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(0.8)
 
-        # текст страницы
         page_text = driver.find_element(By.TAG_NAME, "body").text or ""
 
-        # до 12 валидных картинок
         images = []
         for img in driver.find_elements(By.TAG_NAME, "img"):
             src = img.get_attribute("src")
@@ -191,10 +202,11 @@ def fetch_page_data(url: str):
             if len(images) >= 12:
                 break
 
-        # если совсем пусто — возможно, выдали заглушку; попробуем мобильный домен одной попыткой
+        # Фолбэк на мобильную версию, если совсем пусто
         if not page_text.strip() and not images and "://www.cian.ru/" in url:
             try:
-                driver.get(url.replace("://www.cian.ru/", "://m.cian.ru/"))
+                m_url = url.replace("://www.cian.ru/", "://m.cian.ru/")
+                driver.get(m_url)
                 WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
                 for _ in range(2):
                     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
@@ -215,15 +227,12 @@ def fetch_page_data(url: str):
     except Exception as e:
         logging.error(f"Ошибка при загрузке страницы: {e}")
         return "", []
-
     finally:
         if driver:
             try:
                 driver.quit()
             except Exception:
                 pass
-
-
 
 
 
