@@ -1,20 +1,23 @@
 import asyncio
-import os
+import shutil
+
 import aiohttp
-import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message
 from aiogram.filters import Command
 from dotenv import load_dotenv
-from telegram import InputMediaPhoto
-from telegram.error import RetryAfter
+import os
+import re
+import time
+import logging
+
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from asgiref.sync import sync_to_async
 import django
-from aiogram.types import InputMediaPhoto
-import time
-import undetected_chromedriver as uc
-from aiogram.types import InputMediaPhoto
-from aiogram.exceptions import TelegramRetryAfter
+
 from dev_bot import process_text_with_gpt2
 from district import get_coords_by_address, get_district_by_coords
 from make_info import process_text_with_gpt_adress, process_text_with_gpt_price, process_text_with_gpt_sq, \
@@ -75,12 +78,6 @@ async def send_images_with_text(bot, chat_id, text, images):
         await bot.send_media_group(chat_id=chat_id, media=media_group)
 
 
-
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
-
 def escape_html(text: str) -> str:
     if text is None:
         return ""
@@ -104,65 +101,55 @@ def escape_md_v2(text):
     return "".join(f"\\{char}" if char in special_chars else char for char in text)
 
 
-import os
-import re
-import time
-import logging
-
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+def _which_browser_bin() -> str | None:
+    # 1) ищем по PATH
+    for name in ("google-chrome", "chromium", "chromium-browser"):
+        p = shutil.which(name)
+        if p:
+            return p
+    # 2) типовые пути
+    for p in ("/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"):
+        if os.path.exists(p):
+            return p
+    return None
 
 def _create_uc_driver(version_main: int, headless: bool | None = None):
-    """
-    Стартует undetected_chromedriver c явным бинарём Chrome в контейнере.
-    Если мы в Docker (или задан CHROME_BIN), принудительно headless и безопасные флаги.
-    """
     in_docker = os.path.exists("/.dockerenv") or os.getenv("IN_DOCKER") == "1"
-    chrome_bin = os.getenv("CHROME_BIN") or os.getenv("CHROMIUM_BIN")
-    if in_docker:
-        # в контейнере всегда headless
-        headless = True if headless is None else headless
-    else:
-        # локально можно и без headless
-        headless = False if headless is None else headless
+    if headless is None:
+        headless = True if in_docker else False
 
     options = uc.ChromeOptions()
     if headless:
         options.add_argument("--headless=new")
-    # безопасные флаги для root в контейнере
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    # НЕ ставим кастомный user-agent
 
-    extra_args = (os.getenv("CHROME_EXTRA_ARGS") or "").split()
-    for a in extra_args:
-        if a:
-            options.add_argument(a)
+    chrome_bin = _which_browser_bin()
+    if not chrome_bin:
+        logging.error("Браузер не найден. Установите chromium или google-chrome в контейнер.")
+        return None
 
-    logging.warning(f"=== UC START: version_main={version_main}, headless={headless}, bin={chrome_bin or 'system'} ===")
+    logging.warning(f"=== UC START: version_main={version_main}, headless={headless}, bin={chrome_bin} ===")
 
-    kwargs = dict(options=options, version_main=version_main, use_subprocess=True)
-    if chrome_bin:
-        # укажем явный бинарь Chrome, установленный в образ
-        kwargs["browser_executable_path"] = chrome_bin
-
-    driver = uc.Chrome(**kwargs)
+    driver = uc.Chrome(
+        options=options,
+        version_main=version_main,          # можно убрать — uc сам подберёт; но так предсказуемей
+        use_subprocess=True,
+        browser_executable_path=chrome_bin, # ключевой момент: без ENV, по найденному пути
+    )
     driver.set_page_load_timeout(60)
     return driver
-
 
 def fetch_page_data(url: str):
     """
     Загружает страницу объявления и возвращает (page_text, image_urls).
-    - Берём version_main из ENV (по умолчанию 141 — см. твой серверный лог).
-    - Делаем одну автоматическую повторную попытку, если драйвер подскажет другую мажорную версию.
-    - В контейнере принудительно headless + системный Chrome из CHROME_BIN.
+    - Берём version_main из ENV (по умолчанию 141, т.к. сервер уже на 141).
+    - Одна повторная попытка, если драйвер подсказал другую мажорную версию.
+    - В контейнере принудительно headless + безопасные флаги.
     """
     try:
         version_main = int(os.getenv("UC_VERSION_MAIN", "141"))
@@ -173,27 +160,34 @@ def fetch_page_data(url: str):
     try:
         try:
             driver = _create_uc_driver(version_main=version_main)
+            if not driver:
+                return "", []  # браузер не найден → выходим корректно
         except Exception as e1:
             msg = str(e1)
             m = re.search(r"only supports Chrome version\s+(\d+)", msg)
             if m:
                 hinted = int(m.group(1))
-                logging.warning(f"Повторный запуск UC с подсказанной версией: {hinted}")
+                logger.warning(f"Повторный запуск UC с подсказанной версией: {hinted}")
                 driver = _create_uc_driver(version_main=hinted)
+                if not driver:
+                    return "", []
             else:
-                logging.error(f"Не удалось запустить драйвер: {msg}")
+                logger.error(f"Не удалось запустить драйвер: {msg}")
                 return "", []
 
-        logging.info(f"Открываю страницу: {url}")
+        logger.info(f"Открываю страницу: {url}")
         driver.get(url)
 
         WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+
+        # лёгкая прокрутка, чтобы догрузились изображения
         for _ in range(3):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(0.8)
 
         page_text = driver.find_element(By.TAG_NAME, "body").text or ""
 
+        # собираем до 12 валидных картинок
         images = []
         for img in driver.find_elements(By.TAG_NAME, "img"):
             src = img.get_attribute("src")
@@ -202,7 +196,7 @@ def fetch_page_data(url: str):
             if len(images) >= 12:
                 break
 
-        # Фолбэк на мобильную версию, если совсем пусто
+        # фолбэк на мобильную версию, если совсем пусто
         if not page_text.strip() and not images and "://www.cian.ru/" in url:
             try:
                 m_url = url.replace("://www.cian.ru/", "://m.cian.ru/")
@@ -220,12 +214,12 @@ def fetch_page_data(url: str):
                     if len(images) >= 12:
                         break
             except Exception as e_mb:
-                logging.warning(f"Мобильная версия не помогла: {e_mb}")
+                logger.warning(f"Мобильная версия не помогла: {e_mb}")
 
         return page_text.strip(), images
 
     except Exception as e:
-        logging.error(f"Ошибка при загрузке страницы: {e}")
+        logger.error(f"Ошибка при загрузке страницы: {e}")
         return "", []
     finally:
         if driver:
@@ -233,7 +227,6 @@ def fetch_page_data(url: str):
                 driver.quit()
             except Exception:
                 pass
-
 
 
 @sync_to_async

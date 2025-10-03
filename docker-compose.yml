@@ -3,83 +3,54 @@ services:
     image: postgres:16-alpine
     env_file:
       - .env
-    networks:
-      - app_network
-    restart: on-failure
-    ports:
-      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: Europe/Moscow
     volumes:
       - pg_data:/var/lib/postgresql/data
       - /etc/localtime:/etc/localtime:ro
-    environment:
-      - TZ=Europe/Moscow
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      retries: 5
-      timeout: 5s
-      start_period: 30s
-
-  bot1:
-    env_file:
-      - .env
-    build:
-      context: .
-      dockerfile: Dockerfile.bot
-    networks:
-      - app_network
-    tty: true
-    command: >
-      sh -c "python manage.py makemigrations main &&
-             python manage.py migrate &&
-             python bot.py || 
-             (sleep 30 && exit 1)"
-    depends_on:
-      db:
-        condition: service_healthy
-    container_name: bot1_container
+    ports:
+      - "5432:5432"
+    networks: [app_network]
     restart: unless-stopped
 
-  bot2:
-    env_file:
-      - .env
-    build:
-      context: .
-      dockerfile: Dockerfile.bot_3_2
-    networks:
-      - app_network
-    tty: true
-    command: sh -c "sleep 20 && python manage.py migrate && python bot_3_2.py"
-    depends_on:
-      db:
-        condition: service_healthy
-    container_name: bot2_container
-    restart: unless-stopped
+  # (опционально) redis, если нужен
+  # redis:
+  #   image: redis:7-alpine
+  #   networks: [app_network]
+  #   restart: unless-stopped
 
   bot3:
-    env_file:
-      - .env
     build:
       context: .
       dockerfile: Dockerfile.bot_cian
-    networks:
-      - app_network
-    tty: true
-    command: sh -c "sleep 30 && python manage.py migrate && python bot_cian.py"
-    depends_on:
-      db:
-        condition: service_healthy
-    container_name: bot3_container
-    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - CHROME_BIN=/usr/bin/google-chrome
-      - CHROME_DRIVER=/usr/local/bin/chromedriver
-      - DISPLAY=:99
+      TZ: Europe/Moscow
+      # Chromium из образа:
+      CHROME_BIN: /usr/bin/chromium
+      # Если хочешь подсказать мажорную версию драйвера:
+      UC_VERSION_MAIN: "141"
+      # В контейнере Headless + безопасные флаги
+      CHROME_EXTRA_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-software-rasterizer --window-size=1920,1080 --disable-blink-features=AutomationControlled --headless=new"
+      # Чтобы код мог знать, что мы в контейнере (не обязательно, но удобно)
+      IN_DOCKER: "1"
     volumes:
+      # большой /dev/shm устраняет краши в headless-хроме
       - /dev/shm:/dev/shm
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - db
+      # - redis
+    networks: [app_network]
+    restart: unless-stopped
+    # при желании: ограничение ресурсов
+    # deploy:
+    #   resources:
+    #     limits: { cpus: "1.0", memory: "1024M" }
 
 networks:
   app_network:
